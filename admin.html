@@ -50,6 +50,10 @@ header.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-
 .axis{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
 .qrprev{width:96px;height:96px;object-fit:contain;background:#fff;border-radius:8px;border:1px solid var(--line)}
 .login{max-width:380px;margin:40px auto}
+.tools{display:flex;flex-direction:column;gap:10px;background:var(--bg);border-radius:12px;padding:10px 12px}
+.tools .num{width:76px;font:700 18px var(--display);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:4px 8px}
+.tools .txt{width:150px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:6px 8px}
+.walk select{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:9px 8px}
 </style>
 </head>
 <body>
@@ -69,7 +73,8 @@ header.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-
 <script src="config.js"></script>
 <script src="common.js"></script>
 <script>
-const A = { tab: "agenda", settings: null, day: null, bookings: [], pending: [], walk: null, report: null, channel: null };
+const A = { tab: "agenda", settings: null, day: null, bookings: [], pending: [], walk: null, report: null, channel: null, prices: {}, pricesOk: true, blockOpen: false };
+const priceOf = d => (A.prices[d] ? +A.prices[d].price : +A.settings.price);
 const app = document.getElementById("app");
 const $ = id => document.getElementById(id);
 const publicUrl = () => new URL("./", location.href).href;
@@ -127,11 +132,13 @@ document.querySelectorAll("#tabs button").forEach(b => (b.onclick = () => show(b
 /* ---------- Agenda ---------- */
 async function loadAgenda() {
   const today = nowEc().date;
-  const [{ data: day }, { data: pend }] = await Promise.all([
+  const [{ data: day }, { data: pend }, { data: dp, error: dpErr }] = await Promise.all([
     sb.from("bookings").select("*").eq("day", A.day).neq("status", "cancelled"),
     sb.from("bookings").select("id,day,hour,name").eq("status", "pending").gte("day", today).order("day").order("hour"),
+    sb.from("day_prices").select("*").gte("day", A.day < today ? A.day : today),
   ]);
   A.bookings = day || []; A.pending = pend || [];
+  A.pricesOk = !dpErr; A.prices = Object.fromEntries((dp || []).map(r => [r.day, r]));
   // Recordatorios: reservas confirmadas de hoy (que aún no empiezan) y mañana, con celular y sin recordatorio enviado
   const n = nowEc();
   const { data: rem, error: remErr } = await sb.from("bookings").select("id,day,hour,name,phone,reminded_at")
@@ -144,6 +151,7 @@ function renderAgenda() {
   const days = Array.from({ length: 14 }, (_, i) => addDays(today, i));
   const by = Object.fromEntries(A.bookings.map(b => [b.hour, b]));
   const hours = []; for (let h = st.open_hour; h < st.close_hour; h++) hours.push(h);
+  const reservas = A.bookings.filter(b => b.kind !== "block");
   const cobrado = A.bookings.filter(b => b.paid).reduce((s, b) => s + +b.price, 0);
   const porCobrar = A.bookings.filter(b => !b.paid && b.status === "confirmed").reduce((s, b) => s + +b.price, 0);
 
@@ -151,12 +159,13 @@ function renderAgenda() {
     <section class="card">
       <div class="set" style="flex-wrap:wrap"><h2 style="font-size:24px">${A.day === today ? "Hoy" : dayLabel(A.day)}</h2>
         <input type="date" id="pick" value="${A.day}" aria-label="Elegir fecha" style="background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:6px 10px"></div>
-      <div class="days" role="group" aria-label="Día">${days.map(d => { const p = dayParts(d); return `<button class="day" data-day="${d}" aria-pressed="${d === A.day}"><small>${d === today ? "Hoy" : p.dow}</small><b>${p.d}</b></button>`; }).join("")}</div>
+      <div class="days" role="group" aria-label="Día">${days.map(d => { const p = dayParts(d); return `<button class="day" data-day="${d}" aria-pressed="${d === A.day}"><small>${d === today ? "Hoy" : p.dow}</small><b>${p.d}</b>${A.prices[d] ? `<small class="promo">${money(A.prices[d].price)}</small>` : ""}</button>`; }).join("")}</div>
       <div class="kpis">
-        <div class="kpi"><small>Reservadas</small><b>${A.bookings.length}/${hours.length}</b></div>
+        <div class="kpi"><small>Reservadas</small><b>${reservas.length}/${hours.length}</b></div>
         <div class="kpi"><small>Cobrado</small><b>${money(cobrado)}</b></div>
         <div class="kpi"><small>Por cobrar</small><b>${money(porCobrar)}</b></div>
       </div>
+      ${dayToolsHtml(hours)}
       <div>${hours.map(h => itemHtml(h, by[h])).join("")}</div>
     </section>
     <aside style="display:flex;flex-direction:column;gap:16px;min-width:0">
@@ -166,9 +175,29 @@ function renderAgenda() {
       ${remindersCard()}
       ${shareCard()}
     </aside></div>`;
-  bindAgenda(by);
+  bindAgenda();
+}
+// Precio especial del día y bloqueo de horas
+function dayToolsHtml(hours) {
+  if (!A.pricesOk) return `<p class="notice" style="margin:0">Para usar descuentos y bloquear horas, ejecuta <code>supabase/04-descuentos-bloqueos.sql</code> en Supabase.</p>`;
+  const dp = A.prices[A.day], normal = +A.settings.price;
+  const opts = (from, to, sel) => { let o = ""; for (let h = from; h <= to; h++) o += `<option value="${h}" ${h === sel ? "selected" : ""}>${fmtH(h)}</option>`; return o; };
+  const first = hours[0], last = hours[hours.length - 1] + 1;
+  return `<div class="tools">
+    <div class="set" style="flex-wrap:wrap"><p>Precio de este día<small>${dp ? `Descuento activo${dp.note ? " · " + esc(dp.note) : ""} · normal ${money(normal)}` : `Precio normal (${money(normal)}). Cámbialo para hacer un descuento.`}</small></p>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">$<input id="dp-price" type="number" min="1" step="0.5" value="${priceOf(A.day)}" aria-label="Precio de este día" class="num">
+        <input id="dp-note" placeholder="Motivo (opcional)" value="${esc(dp ? dp.note : "")}" aria-label="Motivo del descuento" class="txt">
+        <button class="btn sm" id="dp-save">Guardar</button>${dp ? `<button class="btn ghost sm" id="dp-del">Quitar descuento</button>` : ""}</div></div>
+    ${A.blockOpen ? `<div class="walk">
+        <div class="field" style="flex:0 1 100px"><label for="bk-from">Desde</label><select id="bk-from">${opts(first, last - 1, first)}</select></div>
+        <div class="field" style="flex:0 1 100px"><label for="bk-to">Hasta</label><select id="bk-to">${opts(first + 1, last, Math.min(first + 3, last))}</select></div>
+        <div class="field"><label for="bk-why">Motivo</label><input id="bk-why" value="Campeonato"></div>
+        <button class="btn sm" id="bk-save">Bloquear</button><button class="btn ghost sm" id="bk-cancel">Cancelar</button></div>`
+      : `<button class="btn ghost sm" id="bk-open" style="align-self:flex-start">🏆 Bloquear horas (campeonato, evento…)</button>`}
+  </div>`;
 }
 function itemHtml(h, b) {
+  if (b && b.kind === "block") return `<div class="item"><span class="t">${fmtH(h)}</span><div class="who"><b>🏆 ${esc(b.name)}</b><div><span class="pill cash">Bloqueado</span></div></div><div class="acts"><button class="btn warn sm" data-del="${b.id}" data-label="Liberar">Liberar</button></div></div>`;
   if (!b) {
     if (A.walk === h) return `<div class="item"><span class="t">${fmtH(h)}</span><div class="walk">
       <div class="field"><label for="w-name">Nombre</label><input id="w-name" placeholder="Quién reserva"></div>
@@ -187,14 +216,15 @@ function itemHtml(h, b) {
   return `<div class="item"><span class="t">${fmtH(h)}</span><div class="who"><b>${esc(b.name)}</b><small>${b.cedula ? "CI " + esc(b.cedula) + " · " : ""}${esc(b.phone || "sin celular")}${b.source === "admin" ? " · desde el panel" : ""}</small><div>${st}${py}</div></div><div class="acts">${acts}</div></div>`;
 }
 function bindAgenda() {
-  app.querySelectorAll("[data-day],[data-goto]").forEach(b => (b.onclick = () => { A.day = b.dataset.day || b.dataset.goto; A.walk = null; loadAgenda(); }));
-  $("pick").onchange = e => { if (e.target.value) { A.day = e.target.value; loadAgenda(); } };
+  const by = Object.fromEntries(A.bookings.map(b => [b.hour, b]));
+  app.querySelectorAll("[data-day],[data-goto]").forEach(b => (b.onclick = () => { A.day = b.dataset.day || b.dataset.goto; A.walk = null; A.blockOpen = false; loadAgenda(); }));
+  $("pick").onchange = e => { if (e.target.value) { A.day = e.target.value; A.blockOpen = false; loadAgenda(); } };
   const upd = async (id, patch, msg) => { const { error } = await sb.from("bookings").update(patch).eq("id", id); if (error) return toast(errMsg(error)); toast(msg); loadAgenda(); };
   app.querySelectorAll("[data-ok]").forEach(b => (b.onclick = () => upd(b.dataset.ok, { status: "confirmed", paid: true }, "Pago confirmado. La hora aparece ocupada en la web.")));
   app.querySelectorAll("[data-cash]").forEach(b => (b.onclick = () => upd(b.dataset.cash, { paid: true }, "Pago en efectivo registrado.")));
   app.querySelectorAll("[data-del]").forEach(b => (b.onclick = () => {
     if (b.dataset.sure) return upd(b.dataset.del, { status: "cancelled" }, "Hora liberada en la web.");
-    b.dataset.sure = "1"; b.textContent = "¿Seguro? Toca otra vez"; setTimeout(() => { if (b.isConnected) { delete b.dataset.sure; b.textContent = "Cancelar"; } }, 4000);
+    b.dataset.sure = "1"; const old = b.textContent; b.textContent = "¿Seguro? Toca otra vez"; setTimeout(() => { if (b.isConnected) { delete b.dataset.sure; b.textContent = old; } }, 4000);
   }));
   app.querySelectorAll("[data-rec]").forEach(b => (b.onclick = async () => {
     const w = window.open("", "_blank");
@@ -208,9 +238,39 @@ function bindAgenda() {
     const name = $("w-name").value.trim(), phone = $("w-phone").value.trim();
     if (name.length < 2) return toast("Escribe el nombre de quien reserva.");
     if (phone && !/^09\d{8}$/.test(phone)) return toast("El celular debe empezar con 09 y tener 10 dígitos.");
-    const { error } = await sb.from("bookings").insert({ day: A.day, hour: A.walk, name, phone, pay_mode: "cash", status: "confirmed", price: A.settings.price, source: "admin" });
+    const { error } = await sb.from("bookings").insert({ day: A.day, hour: A.walk, name, phone, pay_mode: "cash", status: "confirmed", price: priceOf(A.day), source: "admin" });
     if (error) return toast(error.code === "23505" ? "Esa hora ya fue reservada." : errMsg(error));
     A.walk = null; toast("Hora reservada."); loadAgenda();
+  };
+  // Descuento del día
+  if ($("dp-save")) $("dp-save").onclick = async () => {
+    const price = parseFloat($("dp-price").value), note = $("dp-note").value.trim();
+    if (!(price > 0)) return toast("Escribe un precio válido.");
+    const { error } = +price === +A.settings.price && !note
+      ? await sb.from("day_prices").delete().eq("day", A.day)
+      : await sb.from("day_prices").upsert({ day: A.day, price, note });
+    if (error) return toast(errMsg(error));
+    toast(+price === +A.settings.price ? "Precio normal para este día." : `Precio de ${dayLabel(A.day)}: ${money(price)}. Ya se ve en la web.`); loadAgenda();
+  };
+  if ($("dp-del")) $("dp-del").onclick = async () => {
+    const { error } = await sb.from("day_prices").delete().eq("day", A.day);
+    if (error) return toast(errMsg(error));
+    toast("Descuento quitado."); loadAgenda();
+  };
+  // Bloquear horas
+  if ($("bk-open")) $("bk-open").onclick = () => { A.blockOpen = true; A.walk = null; renderAgenda(); };
+  if ($("bk-cancel")) $("bk-cancel").onclick = () => { A.blockOpen = false; renderAgenda(); };
+  if ($("bk-save")) $("bk-save").onclick = async () => {
+    const from = +$("bk-from").value, to = +$("bk-to").value, why = $("bk-why").value.trim() || "Bloqueado";
+    if (to <= from) return toast("La hora final debe ser después de la inicial.");
+    const busy = [], rows = [];
+    for (let h = from; h < to; h++) (by[h] ? busy : rows).push(h);
+    if (!rows.length) return toast("Esas horas ya están ocupadas.");
+    const { error } = await sb.from("bookings").insert(rows.map(h => ({ day: A.day, hour: h, name: why, pay_mode: "cash", status: "confirmed", price: 0, source: "admin", kind: "block" })));
+    if (error) return toast(error.code === "23505" ? "Alguien acaba de reservar una de esas horas. Intenta de nuevo." : errMsg(error));
+    A.blockOpen = false;
+    toast(busy.length ? `Bloqueado. Ojo: ${busy.map(fmtH).join(", ")} ya tenía reserva y no se tocó.` : `Bloqueado de ${fmtH(from)} a ${fmtH(to)}. Ya se ve ocupado en la web.`);
+    loadAgenda();
   };
   app.querySelectorAll("[data-remind]").forEach(a => (a.onclick = () => {
     // El enlace abre WhatsApp; marcamos el recordatorio como enviado
@@ -250,7 +310,7 @@ function bindShare() {
 /* ---------- Reportes ---------- */
 async function loadReport() {
   const today = nowEc().date, from = addDays(today, -59);
-  const { data } = await sb.from("bookings").select("day,hour,price,paid,status").gte("day", from).lte("day", today).neq("status", "cancelled");
+  const { data } = await sb.from("bookings").select("*").gte("day", from).lte("day", today).neq("status", "cancelled");
   A.report = data || []; renderReport();
 }
 function renderReport() {
@@ -260,7 +320,7 @@ function renderReport() {
   const month = today.slice(0, 7), prevMonth = addDays(month + "-01", -1).slice(0, 7);
   const last30 = Array.from({ length: 30 }, (_, i) => addDays(today, i - 29));
   const perDay = last30.map(d => sum(r => r.day === d)); const max = Math.max(...perDay, 1);
-  const byHour = {}; A.report.forEach(r => (byHour[r.hour] = (byHour[r.hour] || 0) + 1));
+  const byHour = {}; A.report.filter(r => r.kind !== "block").forEach(r => (byHour[r.hour] = (byHour[r.hour] || 0) + 1));
   const top = Object.entries(byHour).sort((a, b) => b[1] - a[1]).slice(0, 5);
   const topMax = top.length ? top[0][1] : 1;
   app.innerHTML = `<div class="grid2">

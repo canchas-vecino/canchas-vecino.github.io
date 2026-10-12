@@ -44,25 +44,28 @@
 <script src="common.js"></script>
 <script>
 const S = {
-  settings: null, taken: {}, day: null, days: [],
+  settings: null, taken: {}, prices: {}, day: null, days: [],
   step: "grid", hour: null, pay: "cash", method: "jardin", file: null,
   form: { name: "", cedula: "", phone: "" }, error: "", busy: false, result: null,
 };
 const app = document.getElementById("app");
+const priceOf = d => (S.prices[d] ? +S.prices[d].price : +S.settings.price);
 
 async function load() {
   if (!sb) return setupMissing(app);
   const today = nowEc().date;
   S.days = Array.from({ length: 14 }, (_, i) => addDays(today, i));
   S.day = S.day || today;
-  const [{ data: st, error: e1 }, { data: av, error: e2 }] = await Promise.all([
+  const [{ data: st, error: e1 }, { data: av, error: e2 }, { data: dp }] = await Promise.all([
     sb.from("settings").select("*").eq("id", 1).single(),
     sb.rpc("get_availability", { from_day: S.days[0], to_day: S.days[13] }),
+    sb.from("day_prices").select("*").gte("day", S.days[0]).lte("day", S.days[13]),
   ]);
   if (e1 || e2) { app.innerHTML = `<p class="err">No se pudieron cargar los horarios. Revisa tu conexión y recarga la página.</p>`; return; }
   S.settings = st;
   S.taken = {};
-  (av || []).forEach(r => (S.taken[r.day + "|" + r.hour] = r.status));
+  (av || []).forEach(r => (S.taken[r.day + "|" + r.hour] = r));
+  S.prices = Object.fromEntries((dp || []).map(r => [r.day, r]));
   document.getElementById("sub").textContent = `Canchas del Vecino · El Naranjal · ${money(st.price)} la hora`;
   render();
 }
@@ -71,7 +74,7 @@ function slotState(day, h) {
   const n = nowEc();
   if (day === n.date && h <= n.hour) return "past";
   const t = S.taken[day + "|" + h];
-  return !t ? "free" : t === "pending" ? "pend" : "busy";
+  return !t ? "free" : t.label ? "block" : t.status === "pending" ? "pend" : "busy";
 }
 
 function render() {
@@ -81,12 +84,13 @@ function render() {
     const today = S.days[0];
     app.innerHTML = `
       <div class="days" role="group" aria-label="Día">${S.days.map(d => { const p = dayParts(d); return `
-        <button class="day" data-day="${d}" aria-pressed="${d === S.day}"><small>${d === today ? "Hoy" : p.dow}</small><b>${p.d}</b><small>${p.m}</small></button>`; }).join("")}
+        <button class="day" data-day="${d}" aria-pressed="${d === S.day}"><small>${d === today ? "Hoy" : p.dow}</small><b>${p.d}</b>${S.prices[d] ? `<small class="promo">${money(S.prices[d].price)}</small>` : `<small>${p.m}</small>`}</button>`; }).join("")}
       </div>
       <div class="legend"><span><i style="background:var(--turf)"></i>Libre</span><span><i style="background:var(--pend)"></i>Por confirmar</span><span><i style="background:var(--busy)"></i>Ocupado</span></div>
+      ${S.prices[S.day] ? `<p class="notice promo-note" style="margin:0">🎉 <b>Precio especial este día: ${money(priceOf(S.day))} la hora</b> <s class="muted">${money(st.price)}</s>${S.prices[S.day].note ? `<br>${esc(S.prices[S.day].note)}` : ""}</p>` : ""}
       <div class="slots">${hours.map(h => { const s = slotState(S.day, h);
-        const lab = { free: money(st.price) + " · Libre", pend: "Por confirmar", busy: "Ocupado", past: "Ya pasó" }[s];
-        return `<button class="slot ${s === "free" ? "" : s}" data-h="${h}" ${s === "free" ? "" : "disabled"}><span class="h">${fmtH(h)}–${fmtH(h + 1)}</span><span class="s">${lab}</span></button>`; }).join("")}
+        const lab = { free: money(priceOf(S.day)) + " · Libre", pend: "Por confirmar", busy: "Ocupado", block: "Ocupado · " + esc((S.taken[S.day + "|" + h] || {}).label), past: "Ya pasó" }[s];
+        return `<button class="slot ${s === "free" ? "" : s === "block" ? "busy" : s}" data-h="${h}" ${s === "free" ? "" : "disabled"}><span class="h">${fmtH(h)}–${fmtH(h + 1)}</span><span class="s">${lab}</span></button>`; }).join("")}
       </div>`;
   } else if (S.step === "form") {
     const pre = st.require_prepay; if (pre) S.pay = "now";
@@ -95,7 +99,7 @@ function render() {
     const m = methods.find(x => x[0] === S.method);
     app.innerHTML = `
       <button class="btn ghost sm" id="back" style="align-self:flex-start">← Cambiar hora</button>
-      <div class="summary"><div><small class="muted">${dayLabel(S.day)}</small><br><b>${fmtH(S.hour)}–${fmtH(S.hour + 1)}</b></div><b>${money(st.price)}</b></div>
+      <div class="summary"><div><small class="muted">${dayLabel(S.day)}</small><br><b>${fmtH(S.hour)}–${fmtH(S.hour + 1)}</b></div><b>${money(priceOf(S.day))}</b></div>
       <div class="field"><label for="f-name">Nombre completo</label><input id="f-name" value="${esc(S.form.name)}" placeholder="Ej. Juan Pérez" autocomplete="name"></div>
       <div class="field"><label for="f-cedula">Cédula</label><input id="f-cedula" value="${esc(S.form.cedula)}" inputmode="numeric" maxlength="10" placeholder="10 dígitos"></div>
       <div class="field"><label for="f-phone">Celular (WhatsApp)</label><input id="f-phone" value="${esc(S.form.phone)}" inputmode="tel" maxlength="10" placeholder="09xxxxxxxx" autocomplete="tel"></div>
@@ -105,7 +109,7 @@ function render() {
       </div>
       ${S.pay === "now" ? `<div class="card" style="border-style:dashed">
         ${methods.length ? `<div class="chips" role="group" aria-label="Método de pago">${methods.map(([k, l]) => `<button data-m="${k}" aria-pressed="${S.method === k}">${l}</button>`).join("")}</div>
-        ${S.method === "transfer" ? `<div class="pre">${esc(m[2])}</div>` : `<div class="qr"><img src="${esc(m[2])}" alt="Código QR para pagar"></div><p class="muted" style="margin:0;font-size:13px;text-align:center">Escanea y paga ${money(st.price)}</p>`}`
+        ${S.method === "transfer" ? `<div class="pre">${esc(m[2])}</div>` : `<div class="qr"><img src="${esc(m[2])}" alt="Código QR para pagar"></div><p class="muted" style="margin:0;font-size:13px;text-align:center">Escanea y paga ${money(priceOf(S.day))}</p>`}`
           : `<p class="muted" style="margin:0">Pide los datos de pago a la cancha.</p>`}
         <div class="field"><label for="f-file">Foto del comprobante</label><input type="file" id="f-file" accept="image/*,application/pdf"></div>
         ${S.file ? `<small style="color:var(--turf)">✓ ${esc(S.file.name)}</small>` : ""}
@@ -161,7 +165,7 @@ async function submit() {
       p_pay_mode: S.pay, p_method: S.pay === "now" ? S.method : null, p_receipt_path: path,
     });
     if (error) throw error;
-    S.result = { day: S.day, hour: S.hour, name: name.trim(), pay: S.pay, price: S.settings.price };
+    S.result = { day: S.day, hour: S.hour, name: name.trim(), pay: S.pay, price: priceOf(S.day) };
     S.step = "done";
   } catch (e) { S.error = errMsg(e); }
   S.busy = false; render();
