@@ -74,6 +74,7 @@ header.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-
 <script src="common.js"></script>
 <script>
 const A = { tab: "agenda", settings: null, day: null, bookings: [], pending: [], walk: null, report: null, channel: null, prices: {}, pricesOk: true, blockOpen: false };
+const locTxt = () => (A.settings && A.settings.maps_url ? `\n📍 Ubicación: ${A.settings.maps_url}` : "");
 const priceOf = d => (A.prices[d] ? +A.prices[d].price : +A.settings.price);
 const app = document.getElementById("app");
 const $ = id => document.getElementById(id);
@@ -207,7 +208,7 @@ function itemHtml(h, b) {
   }
   const st = b.status === "pending" ? `<span class="pill pend">Revisar pago</span>` : `<span class="pill ok">Confirmada</span>`;
   const py = b.paid ? `<span class="pill paid">Pagado</span>` : b.pay_mode === "cash" ? `<span class="pill cash">Efectivo al final</span>` : "";
-  const msg = b.status === "pending" ? `Hola ${b.name}, recibimos tu comprobante. Tu reserva en Canchas del Vecino El Naranjal el ${dayLabel(b.day)} de ${fmtH(b.hour)} a ${fmtH(b.hour + 1)} está confirmada. ¡Te esperamos!` : `Hola ${b.name}, te recordamos tu reserva en Canchas del Vecino El Naranjal el ${dayLabel(b.day)} de ${fmtH(b.hour)} a ${fmtH(b.hour + 1)}. ¡Te esperamos!`;
+  const msg = b.status === "pending" ? `Hola ${b.name}, recibimos tu comprobante. Tu reserva en Canchas del Vecino El Naranjal el ${dayLabel(b.day)} de ${fmtH(b.hour)} a ${fmtH(b.hour + 1)} está confirmada. ¡Te esperamos!${locTxt()}` : `Hola ${b.name}, te recordamos tu reserva en Canchas del Vecino El Naranjal el ${dayLabel(b.day)} de ${fmtH(b.hour)} a ${fmtH(b.hour + 1)}. ¡Te esperamos!${locTxt()}`;
   const wa = b.phone ? `<a class="btn wa sm" href="${waLink(b.phone, msg)}" target="_blank" rel="noopener">WhatsApp</a>` : "";
   const rec = b.receipt_path ? `<button class="btn ghost sm" data-rec="${esc(b.receipt_path)}">Ver comprobante</button>` : "";
   const acts = b.status === "pending"
@@ -285,7 +286,7 @@ function bindAgenda() {
 }
 function reminderText(r) {
   const when = r.day === nowEc().date ? "hoy" : "mañana";
-  return `Hola ${r.name}, te recordamos tu reserva en Canchas del Vecino El Naranjal ${when} ${dayLabel(r.day)} de ${fmtH(r.hour)} a ${fmtH(r.hour + 1)}. Si no puedes asistir, avísanos para liberar la hora. ¡Te esperamos! ⚽`;
+  return `Hola ${r.name}, te recordamos tu reserva en Canchas del Vecino El Naranjal ${when} ${dayLabel(r.day)} de ${fmtH(r.hour)} a ${fmtH(r.hour + 1)}. Si no puedes asistir, avísanos para liberar la hora. ¡Te esperamos! ⚽${locTxt()}`;
 }
 function remindersCard() {
   if (A.reminders === null) return `<div class="card" id="reminders"><h3>Recordatorios</h3><p class="muted" style="margin:0;font-size:13px">Para activarlos, ejecuta <code>supabase/02-recordatorios.sql</code> en Supabase.</p></div>`;
@@ -349,6 +350,9 @@ function renderAjustes() {
       <div class="set"><p>Horario<small>Turnos de una hora</small></p><div style="display:flex;gap:6px;align-items:center"><select id="s-open">${hourOpts(s.open_hour, 0, 23)}</select> a <select id="s-close">${hourOpts(s.close_hour, 1, 24)}</select></div></div>
       <div class="field"><label for="s-wa">WhatsApp de la cancha</label><input id="s-wa" inputmode="tel" maxlength="10" placeholder="09xxxxxxxx" value="${esc(s.admin_whatsapp)}"></div>
       <div class="field"><label for="s-bank">Datos para transferencia</label><textarea id="s-bank" rows="4" placeholder="Banco, tipo y número de cuenta, titular, cédula">${esc(s.bank_info)}</textarea></div>
+      ${"maps_url" in s ? `<div class="field"><label for="s-maps">Ubicación (enlace de Google Maps)</label><input id="s-maps" inputmode="url" placeholder="https://maps.app.goo.gl/…" value="${esc(s.maps_url)}"><small class="muted" style="font-size:12px">En Google Maps busca la cancha, toca Compartir y copia el enlace.</small></div>
+      <div class="field"><label for="s-addr">Dirección o referencia</label><input id="s-addr" placeholder="Ej. El Naranjal, junto a la iglesia" value="${esc(s.address)}"></div>`
+        : `<p class="notice" style="margin:0">Para agregar la ubicación, ejecuta <code>supabase/05-ubicacion.sql</code> en Supabase.</p>`}
       <div class="set"><p>QR de Jardín Azuayo<small>Foto o captura del QR para cobrar</small></p>${s.qr_jardin_url ? `<img class="qrprev" src="${esc(s.qr_jardin_url)}" alt="QR Jardín Azuayo actual">` : ""}</div>
       <input type="file" id="s-qr-jardin" accept="image/*" aria-label="Subir QR de Jardín Azuayo">
       <div class="set"><p>QR de DeUna<small>Opcional</small></p>${s.qr_deuna_url ? `<img class="qrprev" src="${esc(s.qr_deuna_url)}" alt="QR DeUna actual">` : ""}</div>
@@ -388,6 +392,10 @@ function renderAjustes() {
         open_hour: +$("s-open").value, close_hour: +$("s-close").value,
         admin_whatsapp: $("s-wa").value.trim(), bank_info: $("s-bank").value.trim(),
       };
+      if ("maps_url" in s) {
+        patch.maps_url = $("s-maps").value.trim(); patch.address = $("s-addr").value.trim();
+        if (patch.maps_url && !/^https?:\/\//i.test(patch.maps_url)) throw new Error("El enlace de ubicación debe empezar con https://");
+      }
       if (patch.close_hour <= patch.open_hour) throw new Error("La hora de cierre debe ser después de la de apertura.");
       if (patch.admin_whatsapp && !/^09\d{8}$/.test(patch.admin_whatsapp)) throw new Error("El WhatsApp debe empezar con 09 y tener 10 dígitos.");
       for (const [key, input] of [["qr_jardin_url", "s-qr-jardin"], ["qr_deuna_url", "s-qr-deuna"]]) {

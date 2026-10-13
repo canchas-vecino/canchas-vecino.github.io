@@ -28,6 +28,7 @@
 .ticket{border:1px solid var(--line);border-radius:12px;padding:12px;display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0}
 .ticket dt{color:var(--muted)} .ticket dd{margin:0;font-weight:600}
 .pre{white-space:pre-line;font-size:14px}
+.loc{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:12px;font-size:14px}
 </style>
 </head>
 <body>
@@ -49,6 +50,10 @@ const S = {
   form: { name: "", cedula: "", phone: "" }, error: "", busy: false, result: null,
 };
 const app = document.getElementById("app");
+function locHtml(st) {
+  if (!st.maps_url && !st.address) return "";
+  return `<div class="loc">${st.address ? `<p style="margin:0">📍 ${esc(st.address)}</p>` : ""}${st.maps_url ? `<a class="btn ghost block" href="${esc(st.maps_url)}" target="_blank" rel="noopener">📍 Cómo llegar (Google Maps)</a>` : ""}</div>`;
+}
 const priceOf = d => (S.prices[d] ? +S.prices[d].price : +S.settings.price);
 
 async function load() {
@@ -91,7 +96,8 @@ function render() {
       <div class="slots">${hours.map(h => { const s = slotState(S.day, h);
         const lab = { free: money(priceOf(S.day)) + " · Libre", pend: "Por confirmar", busy: "Ocupado", block: "Ocupado · " + esc((S.taken[S.day + "|" + h] || {}).label), past: "Ya pasó" }[s];
         return `<button class="slot ${s === "free" ? "" : s === "block" ? "busy" : s}" data-h="${h}" ${s === "free" ? "" : "disabled"}><span class="h">${fmtH(h)}–${fmtH(h + 1)}</span><span class="s">${lab}</span></button>`; }).join("")}
-      </div>`;
+      </div>
+      ${locHtml(st)}`;
   } else if (S.step === "form") {
     const pre = st.require_prepay; if (pre) S.pay = "now";
     const methods = [["jardin", "QR Jardín Azuayo", st.qr_jardin_url], ["transfer", "Transferencia", st.bank_info], ["deuna", "DeUna", st.qr_deuna_url]].filter(m => m[2]);
@@ -124,6 +130,7 @@ function render() {
       <dl class="ticket" style="text-align:left"><dt>Día</dt><dd>${dayLabel(r.day)}</dd><dt>Hora</dt><dd>${fmtH(r.hour)}–${fmtH(r.hour + 1)}</dd><dt>A nombre de</dt><dd>${esc(r.name)}</dd><dt>Pago</dt><dd>${money(r.price)} · ${r.pay === "now" ? "comprobante enviado" : "en la cancha"}</dd></dl>
       <p class="muted" style="margin:0;font-size:13px">Toma captura de esta pantalla. Si no puedes asistir, avisa a la cancha para liberar la hora.</p>
       ${st.admin_whatsapp ? `<a class="btn wa block" href="${waLink(st.admin_whatsapp, `Hola, reservé la cancha el ${dayLabel(r.day)} de ${fmtH(r.hour)} a ${fmtH(r.hour + 1)} a nombre de ${r.name}.`)}" target="_blank" rel="noopener">Escribir a la cancha por WhatsApp</a>` : ""}
+      ${locHtml(st)}
       <button class="btn ghost block" id="again">Ver horarios</button></div>`;
   }
   bind();
