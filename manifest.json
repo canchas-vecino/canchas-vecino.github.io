@@ -18,7 +18,7 @@
     }
   ],
   "id": "./?app=admin",
-  "scope": "./",
+  "scope": "./admin.html",
   "lang": "es",
   "description": "Panel de administración de reservas."
 }
