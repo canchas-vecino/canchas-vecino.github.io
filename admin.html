@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Administrador · Canchas del Vecino</title>
+<title>Administrador · Canchas</title>
 <meta name="robots" content="noindex">
 <meta name="theme-color" content="#1f7a3f">
 <link rel="manifest" href="manifest.json">
@@ -53,14 +53,23 @@ header.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-
 .tools{display:flex;flex-direction:column;gap:10px;background:var(--bg);border-radius:12px;padding:10px 12px}
 .tools .num{width:76px;font:700 18px var(--display);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:4px 8px}
 .tools .txt{width:150px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:6px 8px}
+#venue-pick{background:var(--surface);border:1.5px solid var(--turf);border-radius:999px;padding:8px 14px;font-weight:700;max-width:100%}
+.vlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+.vhead{display:flex;align-items:center;gap:12px}
+.vhead .logo{width:56px;font-size:20px;border-width:2px}
+.vhead h3{font-size:22px}
+.pill.off{background:var(--danger-soft);color:var(--danger)}
+.adm{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:14px;border-top:1px solid var(--line);padding-top:6px;overflow-wrap:anywhere}
 .walk select{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:9px 8px}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header class="top">
-    <div class="brand"><img class="logo" src="logo.png" alt="Logo Canchas del Vecino El Naranjal"><h1>Canchas del Vecino <span>Administrador</span></h1></div>
+    <div class="brand" id="brand"><img class="logo" src="logo.png" alt=""><h1>Canchas <span>Administrador</span></h1></div>
+    <select id="venue-pick" hidden aria-label="Elegir cancha"></select>
     <div class="tabs" id="tabs" hidden role="group" aria-label="Secciones">
+      <button data-tab="canchas" aria-pressed="false" hidden>Todas las canchas</button>
       <button data-tab="agenda" aria-pressed="true">Agenda</button>
       <button data-tab="reportes" aria-pressed="false">Reportes</button>
       <button data-tab="ajustes" aria-pressed="false">Ajustes</button>
@@ -73,28 +82,69 @@ header.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-
 <script src="config.js"></script>
 <script src="common.js"></script>
 <script>
-const A = { tab: "agenda", settings: null, day: null, bookings: [], pending: [], walk: null, report: null, channel: null, prices: {}, pricesOk: true, blockOpen: false };
+const A = { tab: "agenda", venues: [], venue: null, isSuper: false, summary: {}, openAdmins: null, admins: [], settings: null, day: null, bookings: [], pending: [], walk: null, report: null, channel: null, prices: {}, pricesOk: true, blockOpen: false };
 const locTxt = () => (A.settings && A.settings.maps_url ? `\n📍 Ubicación: ${A.settings.maps_url}` : "");
 const priceOf = d => (A.prices[d] ? +A.prices[d].price : +A.settings.price);
 const app = document.getElementById("app");
 const $ = id => document.getElementById(id);
-const publicUrl = () => new URL("./", location.href).href;
+const publicUrl = () => venueLink(A.venue);
+const V = () => A.venue.id;
+const place = () => venueLabel(A.venue);
 
 /* ---------- Sesión ---------- */
 async function start() {
   if (!sb) return setupMissing(app);
   const { data: { session } } = await sb.auth.getSession();
   if (!session) return renderLogin();
-  const { data: me } = await sb.from("admins").select("user_id").eq("user_id", session.user.id).maybeSingle();
-  if (!me) {
-    app.innerHTML = `<div class="card login"><h2>Sin permiso</h2><p class="muted">La cuenta ${esc(session.user.email)} no está registrada como administradora.</p><button class="btn ghost" id="out">Salir</button></div>`;
+  const uid = session.user.id;
+  const [r1, r2, r3] = await Promise.all([
+    sb.from("admins").select("user_id,is_super").eq("user_id", uid).maybeSingle(),
+    sb.from("venue_admins").select("venue_id").eq("user_id", uid),
+    sb.from("venues").select("*").order("is_default", { ascending: false }).order("name"),
+  ]);
+  if (r1.error || r2.error || r3.error) {
+    app.innerHTML = `<div class="card login"><h2>Falta un paso</h2><p class="muted">Ejecuta <code>supabase/06-multi-cancha.sql</code> en Supabase y recarga esta página.</p><button class="btn ghost" id="out">Salir</button></div>`;
     $("out").onclick = logout; return;
   }
+  A.isSuper = !!(r1.data && r1.data.is_super);
+  const mine = new Set((r2.data || []).map(x => x.venue_id));
+  A.venues = (r3.data || []).filter(v => A.isSuper || mine.has(v.id));
+  if (!A.venues.length) {
+    app.innerHTML = `<div class="card login"><h2>Sin permiso</h2><p class="muted">La cuenta ${esc(session.user.email)} no administra ninguna cancha. Pide acceso al administrador general.</p><button class="btn ghost" id="out">Salir</button></div>`;
+    $("out").onclick = logout; return;
+  }
+  let saved = null; try { saved = localStorage.getItem("cancha"); } catch (e) {}
+  A.venue = A.venues.find(v => v.id === saved) || A.venues[0];
   $("tabs").hidden = false;
+  document.querySelector('#tabs [data-tab="canchas"]').hidden = !A.isSuper;
+  if (A.isSuper && !start.done) A.tab = "canchas";
+  start.done = true;
   A.day = A.day || nowEc().date;
   await loadSettings();
+  renderHeader();
   subscribe();
   show(A.tab);
+}
+// Encabezado: logo y nombre de la cancha elegida, y selector si administra varias
+function renderHeader() {
+  const general = A.tab === "canchas";
+  $("brand").innerHTML = general
+    ? `<span class="logo logo-ini" aria-hidden="true">⚽</span><h1>Administrador <span>general</span></h1>`
+    : `${venueLogoHtml(A.venue)}<h1>${esc(A.venue.name)} <span>Administrador</span></h1>`;
+  const pick = $("venue-pick");
+  pick.hidden = general || A.venues.length < 2;
+  pick.innerHTML = A.venues.map(v => `<option value="${v.id}" ${v.id === A.venue.id ? "selected" : ""}>${esc(venueLabel(v))}${v.active ? "" : " (pausada)"}</option>`).join("");
+  document.title = general ? "Administrador general" : `Administrador · ${A.venue.name}`;
+}
+$("venue-pick").onchange = e => switchVenue(e.target.value, A.tab);
+async function switchVenue(id, tab = "agenda") {
+  const v = A.venues.find(x => x.id === id); if (!v) return;
+  A.venue = v; try { localStorage.setItem("cancha", id); } catch (e) {}
+  A.walk = null; A.blockOpen = false; A.day = nowEc().date;
+  if (A.channel) { sb.removeChannel(A.channel); A.channel = null; }
+  await loadSettings(); subscribe();
+  show(tab === "canchas" ? "agenda" : tab);
+  window.scrollTo(0, 0);
 }
 function renderLogin(err = "") {
   $("tabs").hidden = true;
@@ -111,39 +161,165 @@ function renderLogin(err = "") {
     start();
   };
 }
-async function logout() { await sb.auth.signOut(); if (A.channel) sb.removeChannel(A.channel); A.channel = null; renderLogin(); }
+async function logout() { await sb.auth.signOut(); if (A.channel) sb.removeChannel(A.channel); A.channel = null; start.done = false; A.tab = "agenda"; $("venue-pick").hidden = true; renderLogin(); }
 
 function subscribe() {
   if (A.channel) return;
-  A.channel = sb.channel("bookings-admin")
-    .on("postgres_changes", { event: "*", schema: "public", table: "bookings" }, p => {
+  A.channel = sb.channel("bookings-admin-" + V())
+    .on("postgres_changes", { event: "*", schema: "public", table: "bookings", filter: "venue_id=eq." + V() }, p => {
       if (p.eventType === "INSERT" && p.new.source === "web") toast(`Nueva reserva: ${p.new.name}, ${dayLabel(p.new.day)} ${fmtH(p.new.hour)}`);
       if (A.tab === "agenda") loadAgenda(); else if (A.tab === "reportes") loadReport();
     }).subscribe();
 }
-async function loadSettings() { const { data } = await sb.from("settings").select("*").eq("id", 1).single(); A.settings = data; }
+async function loadSettings() { const { data } = await sb.from("settings").select("*").eq("venue_id", V()).single(); A.settings = data; }
 
 function show(tab) {
   A.tab = tab;
   document.querySelectorAll("#tabs button").forEach(b => b.setAttribute("aria-pressed", b.dataset.tab === tab));
-  if (tab === "agenda") loadAgenda(); else if (tab === "reportes") loadReport(); else renderAjustes();
+  renderHeader();
+  if (tab === "canchas") loadCanchas(); else if (tab === "agenda") loadAgenda(); else if (tab === "reportes") loadReport(); else renderAjustes();
 }
 document.querySelectorAll("#tabs button").forEach(b => (b.onclick = () => show(b.dataset.tab)));
+
+/* ---------- Todas las canchas (solo administrador general) ---------- */
+const slugify = t => t.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+async function loadCanchas() {
+  const [{ data: vs }, { data: sum, error }] = await Promise.all([
+    sb.from("venues").select("*").order("is_default", { ascending: false }).order("name"),
+    sb.rpc("platform_summary"),
+  ]);
+  if (vs) { A.venues = vs; A.venue = vs.find(v => v.id === A.venue.id) || vs[0]; }
+  A.summary = Object.fromEntries((error ? [] : sum || []).map(r => [r.venue_id, r]));
+  if (A.openAdmins) await loadAdmins(A.openAdmins);
+  renderCanchas();
+}
+async function loadAdmins(vid) {
+  const { data, error } = await sb.rpc("list_venue_admins", { p_venue_id: vid });
+  A.admins = error ? [] : data || [];
+}
+function venueCard(v) {
+  const s = A.summary[v.id] || { hoy: 0, proximas: 0, por_revisar: 0, cobrado_mes: 0, cobrado_mes_anterior: 0 };
+  const link = venueLink(v), open = A.openAdmins === v.id;
+  return `<section class="card">
+    <div class="vhead">${venueLogoHtml(v)}<div style="min-width:0"><h3>${esc(v.name)}</h3><small class="muted">${esc(v.place || "")}</small>
+      <div>${v.active ? `<span class="pill ok">Activa</span>` : `<span class="pill off">Pausada</span>`}${v.is_default ? `<span class="pill cash">Principal</span>` : ""}</div></div></div>
+    <div class="kpis">
+      <div class="kpi"><small>Hoy</small><b>${s.hoy}</b></div>
+      <div class="kpi"><small>Próximas</small><b>${s.proximas}</b></div>
+      <div class="kpi"><small>Cobrado mes</small><b>${money(s.cobrado_mes)}</b></div>
+    </div>
+    ${s.por_revisar ? `<p class="notice" style="margin:0">⚠️ ${s.por_revisar} comprobante${s.por_revisar > 1 ? "s" : ""} por revisar</p>` : ""}
+    <code style="overflow-wrap:anywhere">${esc(link)}</code>
+    <div class="acts" style="justify-content:flex-start">
+      <button class="btn sm" data-open="${v.id}">Abrir agenda</button>
+      <button class="btn ghost sm" data-vcopy="${esc(link)}">Copiar enlace</button>
+      <a class="btn wa sm" href="https://wa.me/?text=${encodeURIComponent("⚽ Reserva tu cancha en " + venueLabel(v) + ". Mira las horas libres y separa la tuya aquí: " + link)}" target="_blank" rel="noopener">Compartir</a>
+      <button class="btn ghost sm" data-adm="${v.id}" aria-expanded="${open}">👤 Administradores</button>
+      ${v.is_default ? "" : `<button class="btn ${v.active ? "warn" : ""} sm" data-active="${v.id}" data-on="${v.active ? 0 : 1}">${v.active ? "Pausar" : "Activar"}</button>`}
+    </div>
+    ${open ? `<div class="tools">
+      ${A.admins.length ? A.admins.map(a => `<div class="adm"><span>${esc(a.email)}</span><button class="btn warn sm" data-rm="${a.user_id}" data-v="${v.id}">Quitar</button></div>`).join("") : `<p class="muted" style="margin:0;font-size:13px">Esta cancha aún no tiene administrador. Tú (administrador general) ya puedes manejarla.</p>`}
+      <div class="field"><label for="a-email">Correo del nuevo administrador</label><input id="a-email" type="email" placeholder="correo@ejemplo.com" autocomplete="off"></div>
+      <div class="field"><label for="a-pass">Contraseña para su cuenta</label><input id="a-pass" type="text" placeholder="Mínimo 6 caracteres" autocomplete="off">
+        <small class="muted" style="font-size:12px">Déjala vacía si esa persona ya tiene cuenta.</small></div>
+      <button class="btn sm" id="a-add" data-v="${v.id}">Dar acceso a esta cancha</button>
+    </div>` : ""}
+  </section>`;
+}
+function renderCanchas() {
+  const tot = Object.values(A.summary).reduce((t, s) => ({ hoy: t.hoy + s.hoy, mes: t.mes + +s.cobrado_mes, ant: t.ant + +s.cobrado_mes_anterior }), { hoy: 0, mes: 0, ant: 0 });
+  app.innerHTML = `<div style="display:flex;flex-direction:column;gap:16px">
+    <section class="card"><h2 style="font-size:24px">Todas las canchas</h2>
+      <div class="kpis">
+        <div class="kpi"><small>Canchas</small><b>${A.venues.length}</b></div>
+        <div class="kpi"><small>Reservas hoy</small><b>${tot.hoy}</b></div>
+        <div class="kpi"><small>Cobrado mes</small><b>${money(tot.mes)}</b></div>
+      </div>
+      <p class="muted" style="margin:0;font-size:13px">Mes anterior: ${money(tot.ant)} entre todas las canchas. Solo cuenta reservas marcadas como pagadas.</p>
+    </section>
+    <div class="vlist">${A.venues.map(venueCard).join("")}</div>
+    <section class="card" id="new-venue"><h3>Agregar una cancha nueva</h3>
+      <p class="muted" style="margin:0;font-size:13px">Se crea con su propia agenda, precios, ajustes y enlace para clientes. Luego le das acceso a su administrador.</p>
+      <div class="walk" style="background:none;padding:0">
+        <div class="field"><label for="v-name">Nombre</label><input id="v-name" placeholder="Ej. La Bombonera"></div>
+        <div class="field"><label for="v-place">Lugar</label><input id="v-place" placeholder="Ej. Cuenca"></div>
+        <div class="field"><label for="v-slug">Enlace corto</label><input id="v-slug" placeholder="la-bombonera"></div>
+        <button class="btn" id="v-add">Crear cancha</button>
+      </div>
+      <small class="muted" id="v-prev" style="overflow-wrap:anywhere"></small>
+    </section>
+    <button class="btn ghost" id="out" style="align-self:flex-start">Cerrar sesión</button>
+  </div>`;
+  bindCanchas();
+}
+function bindCanchas() {
+  $("out").onclick = logout;
+  app.querySelectorAll("[data-open]").forEach(b => (b.onclick = () => switchVenue(b.dataset.open, "agenda")));
+  app.querySelectorAll("[data-vcopy]").forEach(b => (b.onclick = () => navigator.clipboard.writeText(b.dataset.vcopy).then(() => toast("Enlace copiado."), () => toast("No se pudo copiar. Selecciona el enlace."))));
+  app.querySelectorAll("[data-adm]").forEach(b => (b.onclick = async () => {
+    A.openAdmins = A.openAdmins === b.dataset.adm ? null : b.dataset.adm;
+    if (A.openAdmins) await loadAdmins(A.openAdmins);
+    renderCanchas();
+  }));
+  app.querySelectorAll("[data-active]").forEach(b => (b.onclick = async () => {
+    const on = b.dataset.on === "1";
+    const { error } = await sb.from("venues").update({ active: on }).eq("id", b.dataset.active);
+    if (error) return toast(errMsg(error));
+    toast(on ? "Cancha activa: ya recibe reservas." : "Cancha pausada: la web ya no acepta reservas."); loadCanchas();
+  }));
+  app.querySelectorAll("[data-rm]").forEach(b => (b.onclick = async () => {
+    if (!b.dataset.sure) { b.dataset.sure = "1"; b.textContent = "¿Seguro?"; return; }
+    const { error } = await sb.rpc("remove_venue_admin", { p_venue_id: b.dataset.v, p_user_id: b.dataset.rm });
+    if (error) return toast(errMsg(error));
+    toast("Acceso quitado."); loadCanchas();
+  }));
+  if ($("a-add")) $("a-add").onclick = async () => {
+    const btn = $("a-add"), email = $("a-email").value.trim(), pass = $("a-pass").value;
+    if (!/^\S+@\S+\.\S+$/.test(email)) return toast("Escribe un correo válido.");
+    if (pass && pass.length < 6) return toast("La contraseña debe tener al menos 6 caracteres.");
+    btn.disabled = true;
+    try {
+      if (pass) {
+        // Crea la cuenta sin cerrar tu sesión (cliente aparte que no guarda sesión)
+        const tmp = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: "sb-alta-temporal" } });
+        const { error } = await tmp.auth.signUp({ email, password: pass });
+        if (error && !/already|registered|exists/i.test(error.message))
+          throw new Error(`No se pudo crear la cuenta (${error.message}). Créala en Supabase > Authentication > Add user y vuelve a intentar sin contraseña.`);
+      }
+      const { error } = await sb.rpc("add_venue_admin", { p_venue_id: btn.dataset.v, p_email: email });
+      if (error) throw error;
+      toast(`Listo: ${email} ya puede entrar al panel.`); loadCanchas();
+    } catch (e) { toast(errMsg(e)); btn.disabled = false; }
+  };
+  const preview = () => { const sl = $("v-slug").value.trim() || slugify($("v-name").value); $("v-prev").textContent = sl ? `Enlace para clientes: ${new URL("./", location.href).href}?c=${sl}` : ""; };
+  $("v-name").oninput = () => { if (!$("v-slug").dataset.touched) $("v-slug").value = slugify($("v-name").value); preview(); };
+  $("v-slug").oninput = () => { $("v-slug").dataset.touched = "1"; preview(); };
+  $("v-add").onclick = async () => {
+    const name = $("v-name").value.trim(), plc = $("v-place").value.trim(), slug = slugify($("v-slug").value || name);
+    if (name.length < 2) return toast("Escribe el nombre de la cancha.");
+    if (slug.length < 2) return toast("Escribe un enlace corto (ej. la-bombonera).");
+    $("v-add").disabled = true;
+    const { data: id, error } = await sb.rpc("create_venue", { p_name: name, p_slug: slug, p_place: plc });
+    if (error) { $("v-add").disabled = false; return toast(errMsg(error)); }
+    toast(`${name} creada. Ahora configura su precio y horario en Ajustes.`);
+    A.openAdmins = id; await loadCanchas();
+  };
+}
 
 /* ---------- Agenda ---------- */
 async function loadAgenda() {
   const today = nowEc().date;
   const [{ data: day }, { data: pend }, { data: dp, error: dpErr }] = await Promise.all([
-    sb.from("bookings").select("*").eq("day", A.day).neq("status", "cancelled"),
-    sb.from("bookings").select("id,day,hour,name").eq("status", "pending").gte("day", today).order("day").order("hour"),
-    sb.from("day_prices").select("*").gte("day", A.day < today ? A.day : today),
+    sb.from("bookings").select("*").eq("venue_id", V()).eq("day", A.day).neq("status", "cancelled"),
+    sb.from("bookings").select("id,day,hour,name").eq("venue_id", V()).eq("status", "pending").gte("day", today).order("day").order("hour"),
+    sb.from("day_prices").select("*").eq("venue_id", V()).gte("day", A.day < today ? A.day : today),
   ]);
   A.bookings = day || []; A.pending = pend || [];
   A.pricesOk = !dpErr; A.prices = Object.fromEntries((dp || []).map(r => [r.day, r]));
   // Recordatorios: reservas confirmadas de hoy (que aún no empiezan) y mañana, con celular y sin recordatorio enviado
   const n = nowEc();
   const { data: rem, error: remErr } = await sb.from("bookings").select("id,day,hour,name,phone,reminded_at")
-    .eq("status", "confirmed").gte("day", n.date).lte("day", addDays(n.date, 1)).neq("phone", "").is("reminded_at", null).order("day").order("hour");
+    .eq("venue_id", V()).eq("status", "confirmed").gte("day", n.date).lte("day", addDays(n.date, 1)).neq("phone", "").is("reminded_at", null).order("day").order("hour");
   A.reminders = remErr ? null : (rem || []).filter(r => !(r.day === n.date && r.hour <= n.hour));
   renderAgenda();
 }
@@ -208,7 +384,7 @@ function itemHtml(h, b) {
   }
   const st = b.status === "pending" ? `<span class="pill pend">Revisar pago</span>` : `<span class="pill ok">Confirmada</span>`;
   const py = b.paid ? `<span class="pill paid">Pagado</span>` : b.pay_mode === "cash" ? `<span class="pill cash">Efectivo al final</span>` : "";
-  const msg = b.status === "pending" ? `Hola ${b.name}, recibimos tu comprobante. Tu reserva en Canchas del Vecino El Naranjal el ${dayLabel(b.day)} de ${fmtH(b.hour)} a ${fmtH(b.hour + 1)} está confirmada. ¡Te esperamos!${locTxt()}` : `Hola ${b.name}, te recordamos tu reserva en Canchas del Vecino El Naranjal el ${dayLabel(b.day)} de ${fmtH(b.hour)} a ${fmtH(b.hour + 1)}. ¡Te esperamos!${locTxt()}`;
+  const msg = b.status === "pending" ? `Hola ${b.name}, recibimos tu comprobante. Tu reserva en ${place()} el ${dayLabel(b.day)} de ${fmtH(b.hour)} a ${fmtH(b.hour + 1)} está confirmada. ¡Te esperamos!${locTxt()}` : `Hola ${b.name}, te recordamos tu reserva en ${place()} el ${dayLabel(b.day)} de ${fmtH(b.hour)} a ${fmtH(b.hour + 1)}. ¡Te esperamos!${locTxt()}`;
   const wa = b.phone ? `<a class="btn wa sm" href="${waLink(b.phone, msg)}" target="_blank" rel="noopener">WhatsApp</a>` : "";
   const rec = b.receipt_path ? `<button class="btn ghost sm" data-rec="${esc(b.receipt_path)}">Ver comprobante</button>` : "";
   const acts = b.status === "pending"
@@ -239,7 +415,7 @@ function bindAgenda() {
     const name = $("w-name").value.trim(), phone = $("w-phone").value.trim();
     if (name.length < 2) return toast("Escribe el nombre de quien reserva.");
     if (phone && !/^09\d{8}$/.test(phone)) return toast("El celular debe empezar con 09 y tener 10 dígitos.");
-    const { error } = await sb.from("bookings").insert({ day: A.day, hour: A.walk, name, phone, pay_mode: "cash", status: "confirmed", price: priceOf(A.day), source: "admin" });
+    const { error } = await sb.from("bookings").insert({ venue_id: V(), day: A.day, hour: A.walk, name, phone, pay_mode: "cash", status: "confirmed", price: priceOf(A.day), source: "admin" });
     if (error) return toast(error.code === "23505" ? "Esa hora ya fue reservada." : errMsg(error));
     A.walk = null; toast("Hora reservada."); loadAgenda();
   };
@@ -248,13 +424,13 @@ function bindAgenda() {
     const price = parseFloat($("dp-price").value), note = $("dp-note").value.trim();
     if (!(price > 0)) return toast("Escribe un precio válido.");
     const { error } = +price === +A.settings.price && !note
-      ? await sb.from("day_prices").delete().eq("day", A.day)
-      : await sb.from("day_prices").upsert({ day: A.day, price, note });
+      ? await sb.from("day_prices").delete().eq("venue_id", V()).eq("day", A.day)
+      : await sb.from("day_prices").upsert({ venue_id: V(), day: A.day, price, note }, { onConflict: "venue_id,day" });
     if (error) return toast(errMsg(error));
     toast(+price === +A.settings.price ? "Precio normal para este día." : `Precio de ${dayLabel(A.day)}: ${money(price)}. Ya se ve en la web.`); loadAgenda();
   };
   if ($("dp-del")) $("dp-del").onclick = async () => {
-    const { error } = await sb.from("day_prices").delete().eq("day", A.day);
+    const { error } = await sb.from("day_prices").delete().eq("venue_id", V()).eq("day", A.day);
     if (error) return toast(errMsg(error));
     toast("Descuento quitado."); loadAgenda();
   };
@@ -267,7 +443,7 @@ function bindAgenda() {
     const busy = [], rows = [];
     for (let h = from; h < to; h++) (by[h] ? busy : rows).push(h);
     if (!rows.length) return toast("Esas horas ya están ocupadas.");
-    const { error } = await sb.from("bookings").insert(rows.map(h => ({ day: A.day, hour: h, name: why, pay_mode: "cash", status: "confirmed", price: 0, source: "admin", kind: "block" })));
+    const { error } = await sb.from("bookings").insert(rows.map(h => ({ venue_id: V(), day: A.day, hour: h, name: why, pay_mode: "cash", status: "confirmed", price: 0, source: "admin", kind: "block" })));
     if (error) return toast(error.code === "23505" ? "Alguien acaba de reservar una de esas horas. Intenta de nuevo." : errMsg(error));
     A.blockOpen = false;
     toast(busy.length ? `Bloqueado. Ojo: ${busy.map(fmtH).join(", ")} ya tenía reserva y no se tocó.` : `Bloqueado de ${fmtH(from)} a ${fmtH(to)}. Ya se ve ocupado en la web.`);
@@ -286,7 +462,7 @@ function bindAgenda() {
 }
 function reminderText(r) {
   const when = r.day === nowEc().date ? "hoy" : "mañana";
-  return `Hola ${r.name}, te recordamos tu reserva en Canchas del Vecino El Naranjal ${when} ${dayLabel(r.day)} de ${fmtH(r.hour)} a ${fmtH(r.hour + 1)}. Si no puedes asistir, avísanos para liberar la hora. ¡Te esperamos! ⚽${locTxt()}`;
+  return `Hola ${r.name}, te recordamos tu reserva en ${place()} ${when} ${dayLabel(r.day)} de ${fmtH(r.hour)} a ${fmtH(r.hour + 1)}. Si no puedes asistir, avísanos para liberar la hora. ¡Te esperamos! ⚽${locTxt()}`;
 }
 function remindersCard() {
   if (A.reminders === null) return `<div class="card" id="reminders"><h3>Recordatorios</h3><p class="muted" style="margin:0;font-size:13px">Para activarlos, ejecuta <code>supabase/02-recordatorios.sql</code> en Supabase.</p></div>`;
@@ -300,7 +476,7 @@ function shareCard() {
   return `<div class="card"><h3>Enlace para clientes</h3>
     <p class="muted" style="margin:0;font-size:13px">Compártelo por WhatsApp, en estados o grupos. Los clientes ven las horas libres y reservan solos.</p>
     <code id="link">${esc(publicUrl())}</code>
-    <a class="btn wa block" href="https://wa.me/?text=${encodeURIComponent("⚽ Reserva tu cancha en Canchas del Vecino El Naranjal. Mira las horas libres y separa la tuya aquí: " + publicUrl())}" target="_blank" rel="noopener">Compartir por WhatsApp</a>
+    <a class="btn wa block" href="https://wa.me/?text=${encodeURIComponent("⚽ Reserva tu cancha en " + place() + ". Mira las horas libres y separa la tuya aquí: " + publicUrl())}" target="_blank" rel="noopener">Compartir por WhatsApp</a>
     <button class="btn ghost block" id="copy">Copiar enlace</button></div>`;
 }
 function bindShare() {
@@ -311,7 +487,7 @@ function bindShare() {
 /* ---------- Reportes ---------- */
 async function loadReport() {
   const today = nowEc().date, from = addDays(today, -59);
-  const { data } = await sb.from("bookings").select("*").gte("day", from).lte("day", today).neq("status", "cancelled");
+  const { data } = await sb.from("bookings").select("*").eq("venue_id", V()).gte("day", from).lte("day", today).neq("status", "cancelled");
   A.report = data || []; renderReport();
 }
 function renderReport() {
@@ -345,13 +521,17 @@ function renderAjustes() {
   const hourOpts = (sel, from, to) => Array.from({ length: to - from + 1 }, (_, i) => from + i).map(h => `<option value="${h}" ${h === sel ? "selected" : ""}>${fmtH(h)}</option>`).join("");
   app.innerHTML = `<div class="grid2">
     <section class="card"><h2 style="font-size:24px">Ajustes</h2>
+      <div class="field"><label for="s-vname">Nombre de la cancha</label><input id="s-vname" value="${esc(A.venue.name)}"></div>
+      <div class="field"><label for="s-vplace">Lugar (barrio o ciudad)</label><input id="s-vplace" placeholder="Ej. El Naranjal" value="${esc(A.venue.place)}"></div>
+      <div class="set"><p>Logo de la cancha<small>Se ve en la web de reservas y en este panel</small></p>${A.venue.logo_url || A.venue.is_default ? venueLogoHtml(A.venue, "qrprev") : ""}</div>
+      <input type="file" id="s-logo" accept="image/*" aria-label="Subir logo de la cancha">
       <div class="set"><p>Precio por hora<small>Se aplica a las reservas nuevas</small></p><div style="display:flex;align-items:center;gap:4px;font-family:var(--display);font-size:24px">$<input id="s-price" type="number" min="1" step="0.5" value="${s.price}" style="width:84px;font:700 22px var(--display);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:4px 8px"></div></div>
       <div class="set"><p>Exigir pago al reservar<small>Oculta "Pagar en la cancha" en la web</small></p><label class="toggle"><input type="checkbox" id="s-pre" ${s.require_prepay ? "checked" : ""} aria-label="Exigir pago al reservar"><span></span></label></div>
       <div class="set"><p>Horario<small>Turnos de una hora</small></p><div style="display:flex;gap:6px;align-items:center"><select id="s-open">${hourOpts(s.open_hour, 0, 23)}</select> a <select id="s-close">${hourOpts(s.close_hour, 1, 24)}</select></div></div>
       <div class="field"><label for="s-wa">WhatsApp de la cancha</label><input id="s-wa" inputmode="tel" maxlength="10" placeholder="09xxxxxxxx" value="${esc(s.admin_whatsapp)}"></div>
       <div class="field"><label for="s-bank">Datos para transferencia</label><textarea id="s-bank" rows="4" placeholder="Banco, tipo y número de cuenta, titular, cédula">${esc(s.bank_info)}</textarea></div>
       ${"maps_url" in s ? `<div class="field"><label for="s-maps">Ubicación (enlace de Google Maps)</label><input id="s-maps" inputmode="url" placeholder="https://maps.app.goo.gl/…" value="${esc(s.maps_url)}"><small class="muted" style="font-size:12px">En Google Maps busca la cancha, toca Compartir y copia el enlace.</small></div>
-      <div class="field"><label for="s-addr">Dirección o referencia</label><input id="s-addr" placeholder="Ej. El Naranjal, junto a la iglesia" value="${esc(s.address)}"></div>`
+      <div class="field"><label for="s-addr">Dirección o referencia</label><input id="s-addr" placeholder="Ej. junto a la iglesia del barrio" value="${esc(s.address)}"></div>`
         : `<p class="notice" style="margin:0">Para agregar la ubicación, ejecuta <code>supabase/05-ubicacion.sql</code> en Supabase.</p>`}
       <div class="set"><p>QR de Jardín Azuayo<small>Foto o captura del QR para cobrar</small></p>${s.qr_jardin_url ? `<img class="qrprev" src="${esc(s.qr_jardin_url)}" alt="QR Jardín Azuayo actual">` : ""}</div>
       <input type="file" id="s-qr-jardin" accept="image/*" aria-label="Subir QR de Jardín Azuayo">
@@ -376,13 +556,13 @@ function renderAjustes() {
       <button class="btn ghost" id="out">Cerrar sesión</button></aside></div>`;
   bindShare();
   $("out").onclick = logout;
-  sb.rpc("get_ntfy_topic").then(({ data, error }) => {
+  sb.rpc("get_ntfy_topic", { p_venue_id: V() }).then(({ data, error }) => {
     if (!$("n-topic")) return;
     if (error) { $("n-topic").textContent = "Falta activar: ejecuta supabase/03-notificaciones.sql en Supabase."; $("n-copy").hidden = $("n-test").hidden = true; return; }
     $("n-topic").textContent = data;
   });
   $("n-copy").onclick = () => navigator.clipboard.writeText($("n-topic").textContent).then(() => toast("Nombre del canal copiado."), () => { getSelection().selectAllChildren($("n-topic")); toast("Selecciona y copia el nombre."); });
-  $("n-test").onclick = async () => { const { error } = await sb.rpc("test_ntfy"); toast(error ? errMsg(error) : "Prueba enviada. Revisa tu celular."); };
+  $("n-test").onclick = async () => { const { error } = await sb.rpc("test_ntfy", { p_venue_id: V() }); toast(error ? errMsg(error) : "Prueba enviada. Revisa tu celular."); };
   $("s-save").onclick = async () => {
     const btn = $("s-save"); btn.disabled = true;
     try {
@@ -400,14 +580,27 @@ function renderAjustes() {
       if (patch.admin_whatsapp && !/^09\d{8}$/.test(patch.admin_whatsapp)) throw new Error("El WhatsApp debe empezar con 09 y tener 10 dígitos.");
       for (const [key, input] of [["qr_jardin_url", "s-qr-jardin"], ["qr_deuna_url", "s-qr-deuna"]]) {
         const f = $(input).files[0]; if (!f) continue;
-        const path = `${key}-${Date.now()}.${(f.name.split(".").pop() || "png").toLowerCase()}`;
+        const path = `${V()}/${key}-${Date.now()}.${(f.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "")}`;
         const { error } = await sb.storage.from("branding").upload(path, f, { contentType: f.type, upsert: true });
         if (error) throw new Error("No se pudo subir la imagen del QR.");
         patch[key] = sb.storage.from("branding").getPublicUrl(path).data.publicUrl;
       }
-      const { error } = await sb.from("settings").update(patch).eq("id", 1);
+      const vname = $("s-vname").value.trim(), vplace = $("s-vplace").value.trim();
+      if (vname.length < 2) throw new Error("Escribe el nombre de la cancha.");
+      let logo = A.venue.logo_url || "";
+      const lf = $("s-logo").files[0];
+      if (lf) {
+        const path = `${V()}/logo-${Date.now()}.${(lf.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+        const { error } = await sb.storage.from("branding").upload(path, lf, { contentType: lf.type, upsert: true });
+        if (error) throw new Error("No se pudo subir el logo.");
+        logo = sb.storage.from("branding").getPublicUrl(path).data.publicUrl;
+      }
+      const { error } = await sb.from("settings").update(patch).eq("venue_id", V());
       if (error) throw error;
-      await loadSettings(); toast("Ajustes guardados."); renderAjustes();
+      const { error: e2 } = await sb.rpc("update_venue_info", { p_venue_id: V(), p_name: vname, p_place: vplace, p_logo_url: logo });
+      if (e2) throw e2;
+      Object.assign(A.venue, { name: vname, place: vplace, logo_url: logo || null });
+      await loadSettings(); renderHeader(); toast("Ajustes guardados."); renderAjustes();
     } catch (e) { toast(errMsg(e)); btn.disabled = false; }
   };
 }

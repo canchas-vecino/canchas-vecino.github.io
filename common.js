@@ -29,6 +29,22 @@ function waLink(phone, text) {
   const n = phone && phone.startsWith("09") ? "593" + phone.slice(1) : (phone || "");
   return `https://wa.me/${n}?text=${encodeURIComponent(text)}`;
 }
+// ---------- Canchas (varias en la misma base) ----------
+// Cada cancha se abre con su enlace corto: ?c=la-bombonera. Sin ?c= se abre la cancha principal.
+function venueSlug() { return (new URLSearchParams(location.search).get("c") || "").trim().toLowerCase(); }
+function venueLabel(v) { return v ? (v.place ? `${v.name} ${v.place}` : v.name) : ""; }
+function venueLink(v) {
+  const base = new URL("./", location.href).href;
+  return v && !v.is_default ? `${base}?c=${encodeURIComponent(v.slug)}` : base;
+}
+// Logo de la cancha: el que subió su administrador; la principal usa logo.png; si no hay, sus iniciales
+function venueLogoHtml(v, cls = "logo") {
+  const src = v && v.logo_url ? v.logo_url : v && v.is_default ? "logo.png" : "";
+  if (src) return `<img class="${cls}" src="${esc(src)}" alt="Logo ${esc(venueLabel(v))}">`;
+  const words = String(v ? v.name : "").split(/\s+/).filter(Boolean), big = words.filter(w => w.length > 3);
+  const ini = (big.length ? big : words).slice(0, 2).map(w => w[0]).join("").toUpperCase() || "⚽";
+  return `<span class="${cls} logo-ini" aria-hidden="true">${esc(ini)}</span>`;
+}
 function setupMissing(el) {
   el.innerHTML = `<div class="card"><h2>Falta conectar la base de datos</h2><p class="muted">Completa <code>config.js</code> con la Project URL y la anon key de Supabase.</p></div>`;
 }

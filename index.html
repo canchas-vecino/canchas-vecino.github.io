@@ -3,23 +3,22 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Reservas · Canchas del Vecino El Naranjal</title>
-<meta name="description" content="Reserva tu hora en la cancha sintética Canchas del Vecino, El Naranjal.">
-<meta property="og:title" content="Reserva tu cancha · Canchas del Vecino El Naranjal">
+<title>Reserva tu cancha</title>
+<meta name="description" content="Mira las horas libres de la cancha y separa la tuya.">
+<meta property="og:title" content="Reserva tu cancha">
 <meta property="og:description" content="Mira las horas libres y separa la tuya.">
-<meta property="og:image" content="logo.png">
 <meta name="theme-color" content="#1f7a3f">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Canchas Vecino">
+<meta name="apple-mobile-web-app-title" content="Reservas">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Figtree:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="styles.css">
 <style>
 .wrap{max-width:440px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
 .hero{background:var(--turf);color:var(--turf-ink);border-radius:20px;padding:16px;display:flex;align-items:center;gap:12px;position:relative;overflow:hidden}
 .hero::after{content:"";position:absolute;right:-40px;top:50%;width:120px;height:120px;border:2px solid rgb(255 255 255 / .3);border-radius:50%;transform:translateY(-50%)}
-.hero .logo{width:88px;filter:drop-shadow(0 3px 6px rgb(0 0 0 / .35));position:relative;z-index:1}
+.hero .logo{width:88px;font-size:34px;filter:drop-shadow(0 3px 6px rgb(0 0 0 / .35));position:relative;z-index:1}
 .hero h1{font-size:28px;font-weight:800}
 .hero p{margin:2px 0 0;font-size:14px;opacity:.9}
 .summary{background:var(--bg);border-radius:12px;padding:12px;display:flex;justify-content:space-between;align-items:center}
@@ -34,8 +33,8 @@
 <body>
 <div class="wrap">
   <div class="hero">
-    <img class="logo" src="logo.png" alt="Logo Canchas del Vecino El Naranjal">
-    <div><h1>Reserva tu cancha</h1><p id="sub">Canchas del Vecino · El Naranjal</p></div>
+    <span id="hero-logo"></span>
+    <div><h1>Reserva tu cancha</h1><p id="sub"></p></div>
   </div>
   <main id="app" class="card"><p class="muted">Cargando horarios…</p></main>
 </div>
@@ -45,7 +44,7 @@
 <script src="common.js"></script>
 <script>
 const S = {
-  settings: null, taken: {}, prices: {}, day: null, days: [],
+  venue: null, settings: null, taken: {}, prices: {}, day: null, days: [],
   step: "grid", hour: null, pay: "cash", method: "jardin", file: null,
   form: { name: "", cedula: "", phone: "" }, error: "", busy: false, result: null,
 };
@@ -56,22 +55,43 @@ function locHtml(st) {
 }
 const priceOf = d => (S.prices[d] ? +S.prices[d].price : +S.settings.price);
 
+// Busca la cancha del enlace (?c=...) o la principal
+async function loadVenue() {
+  const slug = venueSlug();
+  let q = sb.from("venues").select("*");
+  q = slug ? q.eq("slug", slug) : q.eq("is_default", true);
+  const { data, error } = await q.maybeSingle();
+  if (error) return null;
+  return data || false;
+}
+function renderVenue(v) {
+  document.getElementById("hero-logo").innerHTML = venueLogoHtml(v);
+  document.title = `Reservas · ${venueLabel(v)}`;
+}
+
 async function load() {
   if (!sb) return setupMissing(app);
+  if (!S.venue) {
+    const v = await loadVenue();
+    if (v === null) { app.innerHTML = `<p class="err">No se pudieron cargar los horarios. Revisa tu conexión y recarga la página.</p>`; return; }
+    if (!v || !v.active) { document.getElementById("sub").textContent = ""; app.innerHTML = `<h2>Cancha no disponible</h2><p class="muted" style="margin:0">Este enlace no corresponde a ninguna cancha activa. Pide el enlace correcto a la cancha.</p>`; return; }
+    S.venue = v; renderVenue(v);
+  }
+  const V = S.venue.id;
   const today = nowEc().date;
   S.days = Array.from({ length: 14 }, (_, i) => addDays(today, i));
   S.day = S.day || today;
   const [{ data: st, error: e1 }, { data: av, error: e2 }, { data: dp }] = await Promise.all([
-    sb.from("settings").select("*").eq("id", 1).single(),
-    sb.rpc("get_availability", { from_day: S.days[0], to_day: S.days[13] }),
-    sb.from("day_prices").select("*").gte("day", S.days[0]).lte("day", S.days[13]),
+    sb.from("settings").select("*").eq("venue_id", V).single(),
+    sb.rpc("get_availability", { from_day: S.days[0], to_day: S.days[13], p_venue_id: V }),
+    sb.from("day_prices").select("*").eq("venue_id", V).gte("day", S.days[0]).lte("day", S.days[13]),
   ]);
   if (e1 || e2) { app.innerHTML = `<p class="err">No se pudieron cargar los horarios. Revisa tu conexión y recarga la página.</p>`; return; }
   S.settings = st;
   S.taken = {};
   (av || []).forEach(r => (S.taken[r.day + "|" + r.hour] = r));
   S.prices = Object.fromEntries((dp || []).map(r => [r.day, r]));
-  document.getElementById("sub").textContent = `Canchas del Vecino · El Naranjal · ${money(st.price)} la hora`;
+  document.getElementById("sub").textContent = [S.venue.name, S.venue.place, `${money(st.price)} la hora`].filter(Boolean).join(" · ");
   render();
 }
 
@@ -163,13 +183,13 @@ async function submit() {
     let path = null;
     if (S.pay === "now") {
       const ext = (S.file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
-      path = `${S.day}/${S.hour}-${crypto.randomUUID()}.${ext}`;
+      path = `${S.venue.id}/${S.day}/${S.hour}-${crypto.randomUUID()}.${ext}`;
       const { error } = await sb.storage.from("receipts").upload(path, S.file, { contentType: S.file.type });
       if (error) throw new Error("No se pudo subir el comprobante. Intenta de nuevo.");
     }
     const { error } = await sb.rpc("create_booking", {
       p_day: S.day, p_hour: S.hour, p_name: name.trim(), p_cedula: cedula, p_phone: phone,
-      p_pay_mode: S.pay, p_method: S.pay === "now" ? S.method : null, p_receipt_path: path,
+      p_pay_mode: S.pay, p_method: S.pay === "now" ? S.method : null, p_receipt_path: path, p_venue_id: S.venue.id,
     });
     if (error) throw error;
     S.result = { day: S.day, hour: S.hour, name: name.trim(), pay: S.pay, price: priceOf(S.day) };

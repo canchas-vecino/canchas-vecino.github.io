@@ -21,6 +21,7 @@ button:focus-visible,input:focus-visible,a:focus-visible{outline:2px solid var(-
 h1,h2,h3{font-family:var(--display);text-transform:uppercase;letter-spacing:.4px;margin:0;line-height:1.05}
 .muted{color:var(--muted)}
 .logo{width:96px;height:auto;flex:0 0 auto}
+.logo-ini{display:inline-grid;place-items:center;aspect-ratio:1;border-radius:50%;background:var(--turf);color:var(--turf-ink);font:800 32px var(--display);border:3px solid var(--turf-ink)}
 .brand{display:flex;align-items:center;gap:12px}
 .brand h1{font-size:clamp(26px,6vw,40px);font-weight:800}
 .brand h1 span{color:var(--turf);display:block}
