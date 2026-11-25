@@ -1,7 +1,7 @@
 // Permite instalar la web como app y abrirla aunque la señal sea débil.
 // Siempre intenta traer la versión nueva; si no hay internet, usa la guardada.
-const CACHE = "canchas-v5";
-const FILES = ["./", "./index.html", "./admin.html", "./styles.css", "./common.js", "./config.js", "./logo.png", "./icon-192.png", "./icon-512.png", "./manifest.json"];
+const CACHE = "canchas-v6";
+const FILES = ["./", "./index.html", "./admin.html", "./styles.css", "./common.js", "./config.js", "./logo.png", "./icon-192.png", "./icon-512.png", "./manifest.json", "./admin-campeonatos.html", "./torneo.html", "./torneo.js"];
 
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => {

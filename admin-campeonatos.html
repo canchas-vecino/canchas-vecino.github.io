@@ -1,0 +1,532 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Campeonatos · Administrador</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#1f7a3f">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Figtree:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="styles.css">
+<style>
+.wrap{max-width:1080px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+header.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
+.sub{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px}
+.sub button{flex:0 0 auto;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:8px 14px;font-weight:600;font-size:14px;cursor:pointer}
+.sub button[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:end}
+.row .field{flex:1 1 150px}
+.row .field.sm{flex:0 1 90px}
+.field select{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 8px;width:100%}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+@media (max-width:860px){.grid2{grid-template-columns:minmax(0,1fr)}}
+.tlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.team{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:12px;padding:10px;background:var(--surface)}
+.team .info{flex:1;min-width:0}
+.team .info b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.team .info small{color:var(--muted);font-size:12px}
+.team select{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px}
+.plist .pl{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+.plist .pl:first-child{border-top:0}
+.pl .n{font-family:var(--display);font-weight:700;font-size:20px;text-align:center}
+.pl small{display:block;color:var(--muted);font-size:12px}
+.pl .warn{color:var(--danger);font-weight:600}
+.ev{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--line);font-size:14px}
+.tcard{display:flex;flex-direction:column;gap:8px}
+.tcard h3{font-size:22px}
+.login{max-width:380px;margin:40px auto}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand" id="brand"><img class="logo" src="logo.png" alt=""><h1>Campeonatos <span>Administrador</span></h1></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <select id="venue-pick" hidden aria-label="Elegir cancha" style="background:var(--surface);border:1.5px solid var(--turf);border-radius:999px;padding:8px 14px;font-weight:700"></select>
+      <a class="btn ghost sm" href="admin.html">← Volver a la agenda</a>
+    </div>
+  </header>
+  <div id="app"><p class="muted">Cargando…</p></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.0/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script src="common.js"></script>
+<script src="torneo.js"></script>
+<script>
+const C = { venues: [], venue: null, list: [], D: null, cat: null, sub: "equipos", team: null, match: null, evTeam: null, draft: null };
+const app = document.getElementById("app");
+const $ = id => document.getElementById(id);
+const PRESETS = ["Abierta", "Sub 40", "Nivel 0.5", "Nivel 1", "Nivel 2", "Máster"];
+
+/* ---------- Sesión y cancha ---------- */
+async function start() {
+  if (!sb) return setupMissing(app);
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) return renderLogin();
+  const uid = session.user.id;
+  const [r1, r2, r3] = await Promise.all([
+    sb.from("admins").select("user_id,is_super").eq("user_id", uid).maybeSingle(),
+    sb.from("venue_admins").select("venue_id").eq("user_id", uid),
+    sb.from("venues").select("*").order("is_default", { ascending: false }).order("name"),
+  ]);
+  const isSuper = !!(r1.data && r1.data.is_super), mine = new Set((r2.data || []).map(x => x.venue_id));
+  C.venues = (r3.data || []).filter(v => isSuper || mine.has(v.id));
+  if (!C.venues.length) { app.innerHTML = `<div class="card login"><h2>Sin permiso</h2><p class="muted">Esta cuenta no administra ninguna cancha.</p><a class="btn ghost" href="admin.html">Volver</a></div>`; return; }
+  let saved = null; try { saved = localStorage.getItem("cancha"); } catch (e) {}
+  C.venue = C.venues.find(v => v.id === saved) || C.venues[0];
+  renderHeader();
+  const tid = new URLSearchParams(location.search).get("t");
+  if (tid) await openTournament(tid); else await loadList();
+}
+function renderHeader() {
+  $("brand").innerHTML = `${venueLogoHtml(C.venue)}<h1>${esc(C.venue.name)} <span>Campeonatos</span></h1>`;
+  const pick = $("venue-pick");
+  pick.hidden = C.venues.length < 2;
+  pick.innerHTML = C.venues.map(v => `<option value="${v.id}" ${v.id === C.venue.id ? "selected" : ""}>${esc(venueLabel(v))}</option>`).join("");
+}
+$("venue-pick").onchange = e => {
+  C.venue = C.venues.find(v => v.id === e.target.value); try { localStorage.setItem("cancha", C.venue.id); } catch (er) {}
+  C.D = null; history.replaceState(null, "", "admin-campeonatos.html"); renderHeader(); loadList();
+};
+function renderLogin(err = "") {
+  app.innerHTML = `<form class="card login" id="login"><h2>Ingresar</h2>
+    <div class="field"><label for="l-email">Correo</label><input id="l-email" type="email" autocomplete="username" required></div>
+    <div class="field"><label for="l-pass">Contraseña</label><input id="l-pass" type="password" autocomplete="current-password" required></div>
+    ${err ? `<p class="err">${esc(err)}</p>` : ""}<button class="btn block" type="submit">Ingresar</button></form>`;
+  $("login").onsubmit = async e => {
+    e.preventDefault();
+    const { error } = await sb.auth.signInWithPassword({ email: $("l-email").value.trim(), password: $("l-pass").value });
+    if (error) return renderLogin("Correo o contraseña incorrectos."); start();
+  };
+}
+
+/* ---------- Lista de campeonatos ---------- */
+async function loadList() {
+  const { data, error } = await sb.from("tournaments").select("*").eq("venue_id", C.venue.id).order("created_at", { ascending: false });
+  if (error) { app.innerHTML = `<div class="card"><h2>Falta un paso</h2><p class="muted">Ejecuta <code>supabase/08-campeonatos.sql</code> en Supabase y recarga esta página.</p></div>`; return; }
+  C.list = data || []; renderList();
+}
+function renderList() {
+  app.innerHTML = `<div style="display:flex;flex-direction:column;gap:16px">
+    <section class="card"><h2 style="font-size:24px">Nuevo campeonato</h2>
+      <div class="row"><div class="field"><label for="t-name">Nombre</label><input id="t-name" placeholder="Ej. Copa El Naranjal"></div>
+        <div class="field"><label for="t-season">Temporada (opcional)</label><input id="t-season" placeholder="Ej. 2026"></div>
+        <button class="btn" data-act="t-new">Crear</button></div>
+    </section>
+    ${C.list.length ? `<div class="tlist">${C.list.map(t => `<section class="card tcard"><h3>${esc(t.name)}</h3>
+        <small class="muted">${esc(t.season || "")} ${t.status === "finished" ? '<span class="pill cash">Terminado</span>' : '<span class="pill ok">En curso</span>'}</small>
+        <button class="btn sm" data-act="t-open" data-id="${t.id}">Abrir</button></section>`).join("")}</div>`
+      : `<p class="muted">Aún no hay campeonatos. Crea el primero arriba.</p>`}
+  </div>`;
+}
+
+/* ---------- Un campeonato ---------- */
+async function openTournament(tid) {
+  const D = await loadTournamentData(tid, true).catch(() => null);
+  if (!D || D.t.venue_id !== C.venue.id) { toast("No se encontró el campeonato."); return loadList(); }
+  C.D = D;
+  if (!C.cat || !D.cats.some(c => c.id === C.cat)) C.cat = D.cats[0] ? D.cats[0].id : null;
+  history.replaceState(null, "", "admin-campeonatos.html?t=" + tid);
+  render();
+}
+const reload = () => openTournament(C.D.t.id);
+const cat = () => C.D.cats.find(c => c.id === C.cat);
+const catTeams = () => C.D.teams.filter(t => t.category_id === C.cat);
+const catSeries = () => C.D.series.filter(s => s.category_id === C.cat).sort((a, b) => a.name.localeCompare(b.name));
+
+function render() {
+  const D = C.D;
+  const subs = [["equipos", "Equipos"], ["series", "Series"], ["partidos", "Partidos"], ["tabla", "Tabla"], ["reportes", "Reportes"], ["ajustes", "Ajustes"]];
+  app.innerHTML = `<div style="display:flex;flex-direction:column;gap:16px">
+    <section class="card">
+      <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">
+        <div><h2 style="font-size:28px">${esc(D.t.name)}</h2><small class="muted">${esc(D.t.season || "")}${D.t.status === "finished" ? " · Terminado" : ""}</small></div>
+        <div class="acts" style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn ghost sm" data-act="back">← Campeonatos</button>
+          <a class="btn ghost sm" href="${esc(torneoLink(D.t.id))}" target="_blank" rel="noopener">Ver página pública</a></div>
+      </div>
+      <div><small class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;font-weight:600">Categorías</small>
+        <div class="chips" style="margin-top:6px">${D.cats.map(c => `<button data-act="cat-sel" data-id="${c.id}" aria-pressed="${c.id === C.cat}">${esc(c.name)}</button>`).join("")}
+          <button data-act="cat-new" aria-pressed="${!C.cat}">+ Categoría</button></div></div>
+    </section>
+    ${!C.cat ? catFormHtml() : `<div class="sub" role="group" aria-label="Secciones">${subs.map(([k, l]) => `<button data-act="sub" data-id="${k}" aria-pressed="${C.sub === k}">${l}</button>`).join("")}</div>
+      <div id="pane">${paneHtml()}</div>`}
+  </div>`;
+}
+function paneHtml() {
+  if (C.sub === "equipos") return C.team ? teamDetailHtml() : equiposHtml();
+  if (C.sub === "series") return seriesHtml();
+  if (C.sub === "partidos") return C.match ? matchEditorHtml() : partidosHtml();
+  if (C.sub === "tabla") return tablaHtml();
+  if (C.sub === "reportes") return reportesHtml();
+  return ajustesHtml();
+}
+
+/* Categoría nueva */
+function catFormHtml() {
+  return `<section class="card"><h3>Nueva categoría</h3>
+    <p class="muted" style="margin:0;font-size:13px">Elige una o escribe el nombre que necesites. Los límites de edad son opcionales: sirven para avisarte si un jugador no cumple.</p>
+    <div class="chips">${PRESETS.map(p => `<button data-act="cat-preset" data-name="${p}">${p}</button>`).join("")}</div>
+    <div class="row"><div class="field"><label for="c-name">Nombre</label><input id="c-name" placeholder="Ej. Abierta"></div>
+      <div class="field sm"><label for="c-min">Edad mín.</label><input id="c-min" type="number" min="0" max="99"></div>
+      <div class="field sm"><label for="c-max">Edad máx.</label><input id="c-max" type="number" min="0" max="99"></div>
+      <button class="btn" data-act="cat-add">Agregar</button></div>
+  </section>`;
+}
+
+/* Equipos */
+function equiposHtml() {
+  const teams = catTeams(), ser = byId(catSeries());
+  return `<div class="grid2">
+    <section class="card"><h3>Inscribir equipo</h3>
+      <div class="field"><label for="tm-name">Nombre del equipo</label><input id="tm-name" placeholder="Ej. Deportivo El Naranjal"></div>
+      <div class="row"><div class="field"><label for="tm-coach">Técnico / delegado</label><input id="tm-coach" placeholder="Nombre"></div>
+        <div class="field"><label for="tm-phone">Celular del técnico</label><input id="tm-phone" inputmode="tel" maxlength="10" placeholder="09xxxxxxxx"></div></div>
+      <div class="field"><label for="tm-crest">Escudo (foto o imagen)</label><input id="tm-crest" type="file" accept="image/*"></div>
+      <button class="btn" data-act="team-add">Inscribir equipo</button>
+    </section>
+    <section class="card"><h3>Equipos inscritos (${teams.length})</h3>
+      ${teams.length ? teams.map(t => `<button class="team" data-act="team-open" data-id="${t.id}" style="text-align:left;cursor:pointer;width:100%">${crestHtml(t, 40)}
+        <span class="info"><b>${esc(t.name)}</b><small>${C.D.players.filter(p => p.team_id === t.id).length} jugadores${t.series_id && ser[t.series_id] ? " · Serie " + esc(ser[t.series_id].name) : ""}</small></span><span aria-hidden="true">›</span></button>`).join("")
+        : `<p class="muted" style="margin:0">Todavía no hay equipos en esta categoría.</p>`}
+    </section></div>`;
+}
+function teamDetailHtml() {
+  const t = C.D.teams.find(x => x.id === C.team), c = cat();
+  if (!t) { C.team = null; return equiposHtml(); }
+  const players = C.D.players.filter(p => p.team_id === t.id), rule = ageRuleText(c);
+  return `<div class="grid2">
+    <section class="card"><button class="btn ghost sm" data-act="team-close" style="align-self:flex-start">← Equipos</button>
+      <div class="rhead">${crestHtml(t, 64)}<h3 style="font-size:24px">${esc(t.name)}</h3></div>
+      <div class="field"><label for="te-name">Nombre</label><input id="te-name" value="${esc(t.name)}"></div>
+      <div class="row"><div class="field"><label for="te-coach">Técnico / delegado</label><input id="te-coach" value="${esc(t.coach_name)}"></div>
+        <div class="field"><label for="te-phone">Celular</label><input id="te-phone" inputmode="tel" maxlength="10" value="${esc(t.coach_phone)}"></div></div>
+      <div class="field"><label for="te-crest">Cambiar escudo</label><input id="te-crest" type="file" accept="image/*"></div>
+      <div class="row"><button class="btn sm" data-act="team-save">Guardar cambios</button>
+        <button class="btn warn sm" data-act="team-del">Eliminar equipo</button></div>
+    </section>
+    <section class="card"><h3>Jugadores (${players.length})</h3>
+      ${rule ? `<p class="notice" style="margin:0;font-size:13px">${esc(c.name)}: ${rule}. Pon la fecha de nacimiento para revisar la edad.</p>` : ""}
+      <div class="row"><div class="field"><label for="pl-name">Nombre completo</label><input id="pl-name" placeholder="Ej. Juan Pérez"></div>
+        <div class="field sm"><label for="pl-num">Camiseta</label><input id="pl-num" type="number" min="0" max="999"></div></div>
+      <div class="row"><div class="field"><label for="pl-ced">Cédula (opcional)</label><input id="pl-ced" inputmode="numeric" maxlength="10"></div>
+        <div class="field"><label for="pl-birth">Fecha de nacimiento (opcional)</label><input id="pl-birth" type="date"></div>
+        <button class="btn sm" data-act="pl-add">Agregar</button></div>
+      <div class="plist">${players.map(p => { const w = ageProblem(c, p), age = ageOn(p.birth_date, nowEc().date); return `<div class="pl"><span class="n">${p.number ?? "–"}</span>
+        <div><b>${esc(p.name)}</b><small>${p.cedula ? "CI " + esc(p.cedula) : ""}${age !== null ? (p.cedula ? " · " : "") + age + " años" : ""}</small>${w ? `<small class="warn">⚠️ ${esc(w)}</small>` : ""}</div>
+        <button class="btn warn sm" data-act="pl-del" data-id="${p.id}">Quitar</button></div>`; }).join("") || `<p class="muted" style="margin:0">Aún no hay jugadores.</p>`}</div>
+    </section></div>`;
+}
+
+/* Series */
+function seriesHtml() {
+  const ss = catSeries(), teams = catTeams();
+  const opts = n => [1, 2, 3, 4, 5, 6].map(i => `<option value="${i}" ${i === n ? "selected" : ""}>${i} ${i === 1 ? "serie" : "series"} (${SERIES_NAMES.slice(0, i).join(", ")})</option>`).join("");
+  return `<div style="display:flex;flex-direction:column;gap:16px">
+    <section class="card"><h3>Series</h3>
+      <p class="muted" style="margin:0;font-size:13px">Divide los ${teams.length} equipos de ${esc(cat().name)} en series. Puedes sortearlos o elegir la serie de cada equipo.</p>
+      <div class="row"><div class="field"><label for="ser-n">Número de series</label><select id="ser-n">${opts(ss.length || 2)}</select></div>
+        <button class="btn sm" data-act="ser-apply">Aplicar</button>
+        ${ss.length ? `<button class="btn ghost sm" data-act="ser-draw">🎲 Sortear equipos</button>` : ""}</div>
+    </section>
+    ${ss.length ? `<div class="tlist">${ss.map(s => `<section class="card"><h3>Serie ${esc(s.name)}</h3>
+      ${teams.filter(t => t.series_id === s.id).map(t => teamSerieRow(t, ss)).join("") || `<p class="muted" style="margin:0;font-size:13px">Sin equipos.</p>`}</section>`).join("")}
+      <section class="card"><h3>Sin serie</h3>${teams.filter(t => !t.series_id || !ss.some(s => s.id === t.series_id)).map(t => teamSerieRow(t, ss)).join("") || `<p class="muted" style="margin:0;font-size:13px">Todos los equipos tienen serie.</p>`}</section></div>` : ""}
+  </div>`;
+}
+function teamSerieRow(t, ss) {
+  return `<div class="team">${crestHtml(t, 32)}<span class="info"><b>${esc(t.name)}</b></span>
+    <select data-series-for="${t.id}" aria-label="Serie de ${esc(t.name)}"><option value="">–</option>${ss.map(s => `<option value="${s.id}" ${t.series_id === s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></div>`;
+}
+
+/* Partidos */
+function groups() {
+  const ss = catSeries(), teams = catTeams();
+  if (!ss.length) return [{ id: null, label: "Todos los equipos", teams }];
+  return ss.map(s => ({ id: s.id, label: "Serie " + s.name, teams: teams.filter(t => t.series_id === s.id) }));
+}
+function partidosHtml() {
+  const teams = catTeams(), ms = C.D.matches.filter(m => m.category_id === C.cat);
+  const topt = teams.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
+  return `<div style="display:flex;flex-direction:column;gap:16px">
+    <section class="card"><h3>Calendario</h3>
+      <p class="muted" style="margin:0;font-size:13px">Genera automáticamente "todos contra todos" dentro de cada serie, o agrega partidos uno por uno (por ejemplo, semifinales y final).</p>
+      <div class="row">${groups().map(g => { const has = ms.some(m => (m.series_id || null) === g.id); return has
+        ? `<button class="btn warn sm" data-act="gen-del" data-id="${g.id || ""}">Borrar calendario · ${esc(g.label)}</button>`
+        : `<button class="btn sm" data-act="gen" data-id="${g.id || ""}" ${g.teams.length < 2 ? "disabled" : ""}>Generar · ${esc(g.label)} (${g.teams.length} equipos)</button>`; }).join("")}</div>
+      <details><summary style="cursor:pointer;font-weight:600">+ Agregar un partido a mano</summary>
+        <div class="row" style="margin-top:8px"><div class="field"><label for="m-home">Local</label><select id="m-home">${topt}</select></div>
+          <div class="field"><label for="m-away">Visitante</label><select id="m-away">${topt}</select></div></div>
+        <div class="row"><div class="field"><label for="m-phase">Fase</label><input id="m-phase" value="Fase de grupos" list="phases">
+          <datalist id="phases"><option>Fase de grupos</option><option>Octavos de final</option><option>Cuartos de final</option><option>Semifinal</option><option>Tercer lugar</option><option>Final</option></datalist></div>
+          <div class="field"><label for="m-date">Fecha</label><input id="m-date" type="date"></div>
+          <div class="field sm"><label for="m-time">Hora</label><input id="m-time" type="time"></div>
+          <button class="btn sm" data-act="m-add">Agregar</button></div>
+      </details>
+    </section>
+    ${groups().map(g => { const list = ms.filter(m => (m.series_id || null) === g.id); return list.length ? `<section class="card"><h3>${esc(g.label)}</h3>
+      ${list.map(m => matchRowHtml(C.D, m, `data-act="m-open" data-id="${m.id}"`, "button")).join("")}</section>` : ""; }).join("")}
+    ${(() => { const other = ms.filter(m => m.series_id && !catSeries().some(s => s.id === m.series_id)); return other.length ? `<section class="card"><h3>Otros partidos</h3>${other.map(m => matchRowHtml(C.D, m, `data-act="m-open" data-id="${m.id}"`, "button")).join("")}</section>` : ""; })()}
+  </div>`;
+}
+function matchEditorHtml() {
+  const m = C.D.matches.find(x => x.id === C.match);
+  if (!m) { C.match = null; return partidosHtml(); }
+  const tm = byId(C.D.teams), h = tm[m.home_id], a = tm[m.away_id], pl = byId(C.D.players);
+  const evs = C.D.events.filter(e => e.match_id === m.id);
+  const g = id => evs.filter(e => e.kind === "goal" && e.team_id === id).length;
+  const sideTeam = C.evTeam === a.id ? a : h;
+  const dr = C.draft && C.draft.id === m.id ? C.draft : { phase: m.phase, date: m.match_date || "", time: m.match_time };
+  const players = C.D.players.filter(p => p.team_id === sideTeam.id);
+  return `<section class="card"><button class="btn ghost sm" data-act="m-close" style="align-self:flex-start">← Partidos</button>
+    <div class="mline"><span class="mteam">${esc(h.name)} ${crestHtml(h, 40)}</span><b class="score">${g(h.id)} - ${g(a.id)}</b><span class="mteam away">${crestHtml(a, 40)} ${esc(a.name)}</span></div>
+    <p class="muted" style="margin:0;text-align:center;font-size:13px">${m.played ? "✓ Resultado guardado" : "Aún sin resultado"} · el marcador se calcula con los goles que registres</p>
+    <div class="row"><div class="field"><label for="me-phase">Fase</label><input id="me-phase" value="${esc(dr.phase)}" list="phases2"><datalist id="phases2"><option>Fase de grupos</option><option>Cuartos de final</option><option>Semifinal</option><option>Final</option></datalist></div>
+      <div class="field"><label for="me-date">Fecha</label><input id="me-date" type="date" value="${esc(dr.date)}"></div>
+      <div class="field sm"><label for="me-time">Hora</label><input id="me-time" type="time" value="${esc(dr.time)}"></div></div>
+    <button class="btn ghost sm" data-act="m-when" style="align-self:flex-start">Guardar fecha y hora</button>
+    <h3>Goles y tarjetas</h3>
+    <div class="row"><div class="field"><label for="ev-team">Equipo</label><select id="ev-team"><option value="${h.id}" ${sideTeam.id === h.id ? "selected" : ""}>${esc(h.name)}</option><option value="${a.id}" ${sideTeam.id === a.id ? "selected" : ""}>${esc(a.name)}</option></select></div>
+      <div class="field"><label for="ev-player">Jugador</label><select id="ev-player">${players.map(p => `<option value="${p.id}">${p.number != null ? p.number + " · " : ""}${esc(p.name)}</option>`).join("")}<option value="">— Sin registrar / autogol —</option></select></div></div>
+    <div class="row"><div class="field sm"><label for="ev-min">Minuto</label><input id="ev-min" type="number" min="0" max="200"></div>
+      <button class="btn sm" data-act="ev-add" data-kind="goal">⚽ Gol</button>
+      <button class="btn ghost sm" data-act="ev-add" data-kind="yellow">🟨 Amarilla</button>
+      <button class="btn ghost sm" data-act="ev-add" data-kind="red">🟥 Roja</button></div>
+    <div>${evs.map(e => `<div class="ev"><span>${KIND_LABEL[e.kind]} · ${esc(e.player_id && pl[e.player_id] ? pl[e.player_id].name : "Sin registrar")} <small class="muted">(${esc(tm[e.team_id] ? tm[e.team_id].name : "")}${e.minute != null ? ", min " + e.minute : ""})</small></span>
+      <button class="btn warn sm" data-act="ev-del" data-id="${e.id}">Quitar</button></div>`).join("") || `<p class="muted" style="margin:0;font-size:13px">Sin goles ni tarjetas todavía. Si el partido terminó 0 a 0, solo toca "Guardar resultado".</p>`}</div>
+    <div class="row"><button class="btn" data-act="m-save">Guardar resultado</button>
+      ${m.played ? `<button class="btn ghost sm" data-act="m-unplay">Marcar como no jugado</button>` : ""}
+      <button class="btn warn sm" data-act="m-del">Eliminar partido</button></div>
+  </section>`;
+}
+
+/* Tabla */
+function tablaHtml() {
+  const stats = playerStats(C.D, C.cat);
+  return `<div style="display:flex;flex-direction:column;gap:16px">
+    ${groups().map(g => `<section class="card"><h3>Posiciones · ${esc(g.label)}</h3>${standingsHtml(standings(C.D, g.teams, g.id === null ? undefined : g.id))}</section>`).join("")}
+    <div class="grid2"><section class="card"><h3>Goleadores</h3>${scorersHtml(stats)}</section>
+      <section class="card"><h3>Tarjetas</h3>${cardsHtml(stats)}</section></div>
+    <p class="muted" style="margin:0;font-size:13px">Victoria ${C.D.t.points_win} pts · Empate ${C.D.t.points_draw} pt · Se ordena por puntos, diferencia de gol y goles a favor.</p>
+  </div>`;
+}
+
+/* Reportes */
+function reportesHtml() {
+  const link = torneoLink(C.D.t.id), teams = catTeams();
+  return `<div style="display:flex;flex-direction:column;gap:16px">
+    <section class="card"><h3>Página pública del campeonato</h3>
+      <p class="muted" style="margin:0;font-size:13px">Posiciones, partidos, goleadores y tarjetas de todas las categorías. Compártela con equipos y aficionados.</p>
+      <code>${esc(link)}</code>
+      <div class="row"><a class="btn wa sm" href="https://wa.me/?text=${encodeURIComponent("⚽ " + C.D.t.name + ": posiciones, resultados y goleadores aquí: " + link)}" target="_blank" rel="noopener">Compartir por WhatsApp</a>
+        <button class="btn ghost sm" data-act="copy" data-id="${esc(link)}">Copiar enlace</button></div>
+    </section>
+    <section class="card"><h3>Reporte para cada técnico · ${esc(cat().name)}</h3>
+      <p class="muted" style="margin:0;font-size:13px">Cada reporte trae la tabla de su serie, sus jugadores con goles y tarjetas, y sus partidos. Se puede imprimir o guardar como PDF.</p>
+      ${teams.map(t => `<div class="team">${crestHtml(t, 36)}<span class="info"><b>${esc(t.name)}</b><small>${esc(t.coach_name || "Sin técnico")}${t.coach_phone ? " · " + esc(t.coach_phone) : ""}</small></span>
+        <span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+          <a class="btn ghost sm" href="${esc(torneoLink(C.D.t.id, t.id))}" target="_blank" rel="noopener">Ver</a>
+          ${t.coach_phone ? `<a class="btn wa sm" href="${waLink(t.coach_phone, teamReportText(C.D, t))}" target="_blank" rel="noopener">Enviar al técnico</a>` : `<a class="btn wa sm" href="https://wa.me/?text=${encodeURIComponent(teamReportText(C.D, t))}" target="_blank" rel="noopener">Enviar</a>`}
+        </span></div>`).join("") || `<p class="muted" style="margin:0">Aún no hay equipos.</p>`}
+    </section></div>`;
+}
+
+/* Ajustes */
+function ajustesHtml() {
+  const t = C.D.t, c = cat();
+  return `<div class="grid2">
+    <section class="card"><h3>Categoría ${esc(c.name)}</h3>
+      <div class="row"><div class="field"><label for="ce-name">Nombre</label><input id="ce-name" value="${esc(c.name)}"></div>
+        <div class="field sm"><label for="ce-min">Edad mín.</label><input id="ce-min" type="number" min="0" max="99" value="${c.min_age ?? ""}"></div>
+        <div class="field sm"><label for="ce-max">Edad máx.</label><input id="ce-max" type="number" min="0" max="99" value="${c.max_age ?? ""}"></div></div>
+      <div class="row"><button class="btn sm" data-act="cat-save">Guardar categoría</button>
+        <button class="btn warn sm" data-act="cat-del">Eliminar categoría</button></div>
+      <small class="muted">Eliminar la categoría borra sus equipos, jugadores y partidos.</small>
+    </section>
+    <section class="card"><h3>Campeonato</h3>
+      <div class="field"><label for="ts-name">Nombre</label><input id="ts-name" value="${esc(t.name)}"></div>
+      <div class="row"><div class="field"><label for="ts-season">Temporada</label><input id="ts-season" value="${esc(t.season)}"></div>
+        <div class="field sm"><label for="ts-win">Pts victoria</label><input id="ts-win" type="number" min="0" max="10" value="${t.points_win}"></div>
+        <div class="field sm"><label for="ts-draw">Pts empate</label><input id="ts-draw" type="number" min="0" max="10" value="${t.points_draw}"></div></div>
+      <div class="field"><label for="ts-status">Estado</label><select id="ts-status"><option value="active" ${t.status === "active" ? "selected" : ""}>En curso</option><option value="finished" ${t.status === "finished" ? "selected" : ""}>Terminado</option></select></div>
+      <div class="row"><button class="btn sm" data-act="t-save">Guardar</button>
+        <button class="btn warn sm" data-act="t-del">Eliminar campeonato</button></div>
+    </section></div>`;
+}
+
+/* ---------- Acciones ---------- */
+// Escudo: se achica a 256 px para que cargue rápido
+function shrinkImage(file, max = 256) {
+  return new Promise((ok, fail) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => {
+      const s = Math.min(1, max / Math.max(img.width, img.height)), c = document.createElement("canvas");
+      c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+      c.toBlob(b => (b ? ok(b) : fail(new Error("No se pudo leer la imagen."))), "image/png");
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); fail(new Error("Esa imagen no se puede abrir. Prueba con una foto JPG o PNG.")); };
+    img.src = url;
+  });
+}
+async function uploadCrest(file) {
+  const blob = await shrinkImage(file);
+  const path = `${C.venue.id}/escudos/${crypto.randomUUID()}.png`;
+  const { error } = await sb.storage.from("branding").upload(path, blob, { contentType: "image/png" });
+  if (error) throw new Error("No se pudo subir el escudo.");
+  return sb.storage.from("branding").getPublicUrl(path).data.publicUrl;
+}
+const num = v => (v === "" || v == null ? null : Math.max(0, Math.round(+v)));
+function sure(b, label = "¿Seguro? Toca otra vez") {
+  if (b.dataset.sure) return true;
+  const old = b.textContent; b.dataset.sure = "1"; b.textContent = label;
+  setTimeout(() => { if (b.isConnected) { delete b.dataset.sure; b.textContent = old; } }, 4000);
+  return false;
+}
+async function run(b, fn) {
+  if (b) b.disabled = true;
+  try { await fn(); } catch (e) { toast(errMsg(e)); if (b && b.isConnected) b.disabled = false; }
+}
+const ok = r => { if (r.error) throw r.error; return r.data; };
+
+// Lo que se escribe en fecha/hora/fase no se pierde al registrar un gol
+app.addEventListener("input", e => {
+  if (["me-phase", "me-date", "me-time"].includes(e.target.id))
+    C.draft = { id: C.match, phase: $("me-phase").value, date: $("me-date").value, time: $("me-time").value };
+});
+app.addEventListener("change", e => {
+  if (["me-phase", "me-date", "me-time"].includes(e.target.id))
+    C.draft = { id: C.match, phase: $("me-phase").value, date: $("me-date").value, time: $("me-time").value };
+  const s = e.target.closest("[data-series-for]");
+  if (s) return run(null, async () => { ok(await sb.from("t_teams").update({ series_id: s.value || null }).eq("id", s.dataset.seriesFor)); await reload(); });
+  if (e.target.id === "ev-team") { C.evTeam = e.target.value; render(); }
+});
+
+app.addEventListener("click", e => {
+  const b = e.target.closest("[data-act]"); if (!b || b.disabled) return;
+  const act = b.dataset.act, id = b.dataset.id;
+  const A = {
+    "t-new": () => run(b, async () => {
+      const name = $("t-name").value.trim(); if (name.length < 2) throw new Error("Escribe el nombre del campeonato.");
+      const t = ok(await sb.from("tournaments").insert({ venue_id: C.venue.id, name, season: $("t-season").value.trim() }).select().single());
+      C.cat = null; C.sub = "equipos"; toast("Campeonato creado. Ahora agrega sus categorías."); await openTournament(t.id);
+    }),
+    "t-open": () => { C.cat = null; C.sub = "equipos"; C.team = C.match = null; openTournament(id); },
+    "back": () => { C.D = null; history.replaceState(null, "", "admin-campeonatos.html"); loadList(); },
+    "cat-new": () => { C.cat = null; render(); },
+    "cat-sel": () => { C.cat = id; C.team = C.match = null; render(); },
+    "cat-preset": () => { $("c-name").value = b.dataset.name; },
+    "cat-add": () => run(b, async () => {
+      const name = $("c-name").value.trim(); if (!name) throw new Error("Escribe el nombre de la categoría.");
+      const c = ok(await sb.from("t_categories").insert({ tournament_id: C.D.t.id, name, min_age: num($("c-min").value), max_age: num($("c-max").value), sort: C.D.cats.length }).select().single());
+      C.cat = c.id; C.sub = "equipos"; toast(`Categoría ${name} creada.`); await reload();
+    }),
+    "sub": () => { C.sub = id; C.team = C.match = null; render(); },
+    "team-add": () => run(b, async () => {
+      const name = $("tm-name").value.trim(), phone = $("tm-phone").value.trim(), f = $("tm-crest").files[0];
+      if (name.length < 2) throw new Error("Escribe el nombre del equipo.");
+      if (phone && !/^09\d{8}$/.test(phone)) throw new Error("El celular debe empezar con 09 y tener 10 dígitos.");
+      const crest_url = f ? await uploadCrest(f) : null;
+      ok(await sb.from("t_teams").insert({ category_id: C.cat, name, coach_name: $("tm-coach").value.trim(), coach_phone: phone, crest_url }));
+      toast(`${name} inscrito.`); await reload();
+    }),
+    "team-open": () => { C.team = id; render(); window.scrollTo(0, 0); },
+    "team-close": () => { C.team = null; render(); },
+    "team-save": () => run(b, async () => {
+      const name = $("te-name").value.trim(), phone = $("te-phone").value.trim(), f = $("te-crest").files[0];
+      if (name.length < 2) throw new Error("Escribe el nombre del equipo.");
+      if (phone && !/^09\d{8}$/.test(phone)) throw new Error("El celular debe empezar con 09 y tener 10 dígitos.");
+      const patch = { name, coach_name: $("te-coach").value.trim(), coach_phone: phone };
+      if (f) patch.crest_url = await uploadCrest(f);
+      ok(await sb.from("t_teams").update(patch).eq("id", C.team)); toast("Equipo actualizado."); await reload();
+    }),
+    "team-del": () => { if (sure(b)) run(b, async () => { ok(await sb.from("t_teams").delete().eq("id", C.team)); C.team = null; toast("Equipo eliminado."); await reload(); }); },
+    "pl-add": () => run(b, async () => {
+      const name = $("pl-name").value.trim(), ced = $("pl-ced").value.trim();
+      if (name.length < 2) throw new Error("Escribe el nombre del jugador.");
+      if (ced && !/^\d{10}$/.test(ced)) throw new Error("La cédula debe tener 10 dígitos.");
+      if (ced && C.D.players.some(p => p.cedula === ced && C.D.teams.some(t => t.id === p.team_id && t.category_id === C.cat))) throw new Error("Esa cédula ya está inscrita en esta categoría.");
+      const p = { team_id: C.team, name, number: num($("pl-num").value), cedula: ced, birth_date: $("pl-birth").value || null };
+      ok(await sb.from("t_players").insert(p));
+      const w = ageProblem(cat(), p); toast(w ? `Jugador agregado. Ojo: ${w}.` : "Jugador agregado.");
+      await reload(); $("pl-name") && $("pl-name").focus();
+    }),
+    "pl-del": () => { if (sure(b, "¿Quitar?")) run(b, async () => { ok(await sb.from("t_players").delete().eq("id", id)); await reload(); }); },
+    "ser-apply": () => run(b, async () => {
+      const n = +$("ser-n").value, ss = catSeries(), want = SERIES_NAMES.slice(0, n);
+      const add = want.filter(w => !ss.some(s => s.name === w)).map(name => ({ category_id: C.cat, name }));
+      if (add.length) ok(await sb.from("t_series").insert(add));
+      const extra = ss.filter(s => !want.includes(s.name));
+      if (extra.length) ok(await sb.from("t_series").delete().in("id", extra.map(s => s.id)));
+      toast(`Listo: ${n} ${n === 1 ? "serie" : "series"}.`); await reload();
+    }),
+    "ser-draw": () => { if (sure(b, "¿Sortear de nuevo? Toca otra vez")) run(b, async () => {
+      const ss = catSeries(), teams = catTeams().map(t => t.id);
+      for (let i = teams.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [teams[i], teams[j]] = [teams[j], teams[i]]; }
+      await Promise.all(teams.map((tid, i) => sb.from("t_teams").update({ series_id: ss[i % ss.length].id }).eq("id", tid)));
+      toast("Sorteo hecho."); await reload();
+    }); },
+    "gen": () => run(b, async () => {
+      const g = groups().find(x => (x.id || "") === id), rounds = roundRobin(g.teams.map(t => t.id));
+      const rows = rounds.flatMap((games, r) => games.map(([h, a]) => ({ category_id: C.cat, series_id: g.id, round: r + 1, phase: "Fase de grupos", home_id: h, away_id: a })));
+      ok(await sb.from("t_matches").insert(rows)); toast(`${rows.length} partidos en ${rounds.length} fechas. Pon día y hora en cada uno.`); await reload();
+    }),
+    "gen-del": () => { if (sure(b, "Se borran partidos y resultados. ¿Seguro?")) run(b, async () => {
+      let q = sb.from("t_matches").delete().eq("category_id", C.cat);
+      q = id ? q.eq("series_id", id) : q.is("series_id", null);
+      ok(await q); toast("Calendario borrado."); await reload();
+    }); },
+    "m-add": () => run(b, async () => {
+      const h = $("m-home").value, a = $("m-away").value; if (!h || !a || h === a) throw new Error("Elige dos equipos distintos.");
+      const tm = byId(C.D.teams), sid = tm[h].series_id && tm[h].series_id === tm[a].series_id && $("m-phase").value.trim() === "Fase de grupos" ? tm[h].series_id : null;
+      ok(await sb.from("t_matches").insert({ category_id: C.cat, series_id: sid, home_id: h, away_id: a, phase: $("m-phase").value.trim() || "Partido", match_date: $("m-date").value || null, match_time: $("m-time").value }));
+      toast("Partido agregado."); await reload();
+    }),
+    "m-open": () => { C.match = id; C.draft = null; const m = C.D.matches.find(x => x.id === id); C.evTeam = m ? m.home_id : null; render(); window.scrollTo(0, 0); },
+    "m-close": () => { C.match = null; C.draft = null; render(); },
+    "ev-add": () => run(b, async () => {
+      const team_id = $("ev-team").value, player_id = $("ev-player").value || null;
+      if (b.dataset.kind !== "goal" && !player_id) throw new Error("Elige el jugador que recibió la tarjeta.");
+      ok(await sb.from("t_events").insert({ match_id: C.match, team_id, player_id, kind: b.dataset.kind, minute: num($("ev-min").value) }));
+      await saveScore(false); await reload();
+    }),
+    "ev-del": () => run(b, async () => { ok(await sb.from("t_events").delete().eq("id", id)); await saveScore(false); await reload(); }),
+    "m-save": () => run(b, async () => { await saveScore(true); toast("Resultado guardado. La tabla ya se actualizó."); C.match = null; C.draft = null; await reload(); }),
+    "m-when": () => run(b, async () => {
+      ok(await sb.from("t_matches").update({ phase: $("me-phase").value.trim() || "Partido", match_date: $("me-date").value || null, match_time: $("me-time").value }).eq("id", C.match));
+      C.draft = null; toast("Fecha guardada."); await reload();
+    }),
+    "m-unplay": () => run(b, async () => { ok(await sb.from("t_matches").update({ played: false }).eq("id", C.match)); await reload(); }),
+    "m-del": () => { if (sure(b)) run(b, async () => { ok(await sb.from("t_matches").delete().eq("id", C.match)); C.match = null; toast("Partido eliminado."); await reload(); }); },
+    "copy": () => navigator.clipboard.writeText(id).then(() => toast("Enlace copiado."), () => toast("No se pudo copiar.")),
+    "cat-save": () => run(b, async () => {
+      const name = $("ce-name").value.trim(); if (!name) throw new Error("Escribe el nombre.");
+      ok(await sb.from("t_categories").update({ name, min_age: num($("ce-min").value), max_age: num($("ce-max").value) }).eq("id", C.cat));
+      toast("Categoría guardada."); await reload();
+    }),
+    "cat-del": () => { if (sure(b, "Se borra todo lo de esta categoría. ¿Seguro?")) run(b, async () => { ok(await sb.from("t_categories").delete().eq("id", C.cat)); C.cat = null; toast("Categoría eliminada."); await reload(); }); },
+    "t-save": () => run(b, async () => {
+      const name = $("ts-name").value.trim(); if (name.length < 2) throw new Error("Escribe el nombre.");
+      ok(await sb.from("tournaments").update({ name, season: $("ts-season").value.trim(), points_win: num($("ts-win").value) ?? 3, points_draw: num($("ts-draw").value) ?? 1, status: $("ts-status").value }).eq("id", C.D.t.id));
+      toast("Campeonato guardado."); await reload();
+    }),
+    "t-del": () => { if (sure(b, "Se borra TODO el campeonato. ¿Seguro?")) run(b, async () => { ok(await sb.from("tournaments").delete().eq("id", C.D.t.id)); C.D = null; history.replaceState(null, "", "admin-campeonatos.html"); toast("Campeonato eliminado."); await loadList(); }); },
+  };
+  if (A[act]) A[act]();
+});
+// El marcador sale de los goles registrados; played = true cuando se guarda el resultado
+async function saveScore(markPlayed) {
+  const m = C.D.matches.find(x => x.id === C.match);
+  const { data: evs } = await sb.from("t_events").select("team_id,kind").eq("match_id", m.id).eq("kind", "goal");
+  const patch = { home_goals: (evs || []).filter(e => e.team_id === m.home_id).length, away_goals: (evs || []).filter(e => e.team_id === m.away_id).length };
+  if (markPlayed) Object.assign(patch, { played: true, phase: $("me-phase").value.trim() || m.phase, match_date: $("me-date").value || null, match_time: $("me-time").value });
+  ok(await sb.from("t_matches").update(patch).eq("id", m.id));
+}
+
+start();
+</script>
+</body>
+</html>

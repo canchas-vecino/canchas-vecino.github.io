@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Campeonato</title>
+<meta name="description" content="Posiciones, resultados, goleadores y tarjetas del campeonato.">
+<meta name="theme-color" content="#1f7a3f">
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Figtree:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="styles.css">
+<style>
+.wrap{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+.hero{background:var(--turf);color:var(--turf-ink);border-radius:20px;padding:16px;display:flex;align-items:center;gap:12px}
+.hero .logo{width:72px}
+.hero h1{font-size:30px;font-weight:800}
+.hero p{margin:2px 0 0;font-size:14px;opacity:.9}
+.sub{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px}
+.sub button{flex:0 0 auto;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:8px 14px;font-weight:600;font-size:14px;cursor:pointer}
+.sub button[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.tlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
+.team{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:12px;padding:10px;background:var(--surface);text-decoration:none;color:inherit;font-weight:600}
+@media print{.hero{background:none;color:#000;padding:0}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero" id="hero"><div><h1>Campeonato</h1></div></div>
+  <main id="app" style="display:flex;flex-direction:column;gap:14px"><p class="muted">Cargando…</p></main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.0/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script src="common.js"></script>
+<script src="torneo.js"></script>
+<script>
+const P = { D: null, cat: null, tab: "tabla" };
+const q = new URLSearchParams(location.search), TID = q.get("t"), TEAM = q.get("e");
+const app = document.getElementById("app");
+
+async function load() {
+  if (!sb) return setupMissing(app);
+  if (!TID) { app.innerHTML = `<div class="card"><p>Falta el enlace del campeonato. Pídelo a la cancha.</p></div>`; return; }
+  try { P.D = await loadTournamentData(TID); } catch (e) { P.D = null; }
+  if (!P.D) { app.innerHTML = `<div class="card"><p>No se encontró este campeonato.</p></div>`; return; }
+  const D = P.D;
+  document.title = D.t.name;
+  document.getElementById("hero").innerHTML = `${venueLogoHtml(D.venue)}<div><h1>${esc(D.t.name)}</h1><p>${esc(venueLabel(D.venue))}${D.t.season ? " · " + esc(D.t.season) : ""}${D.t.status === "finished" ? " · Terminado" : ""}</p></div>`;
+  const team = TEAM && D.teams.find(t => t.id === TEAM);
+  if (team) P.cat = team.category_id;
+  if (!P.cat || !D.cats.some(c => c.id === P.cat)) P.cat = D.cats[0] ? D.cats[0].id : null;
+  team ? renderTeam(team) : render();
+}
+function render() {
+  const D = P.D;
+  if (!D.cats.length) { app.innerHTML = `<div class="card"><p class="muted" style="margin:0">Las categorías y equipos se publicarán pronto.</p></div>`; return; }
+  const teams = D.teams.filter(t => t.category_id === P.cat), ss = D.series.filter(s => s.category_id === P.cat).sort((a, b) => a.name.localeCompare(b.name));
+  const groups = ss.length ? ss.map(s => ({ id: s.id, label: "Serie " + s.name, teams: teams.filter(t => t.series_id === s.id) })) : [{ id: null, label: "Posiciones", teams }];
+  const ms = D.matches.filter(m => m.category_id === P.cat), stats = playerStats(D, P.cat);
+  let body = "";
+  if (P.tab === "tabla") body = groups.map(g => `<section class="card"><h3>${esc(g.label)}</h3>${standingsHtml(standings(D, g.teams, g.id === null ? undefined : g.id))}</section>`).join("");
+  else if (P.tab === "partidos") {
+    const played = ms.filter(m => m.played).reverse(), next = ms.filter(m => !m.played);
+    body = `<section class="card"><h3>Próximos partidos</h3>${next.map(m => matchRowHtml(D, m)).join("") || `<p class="muted" style="margin:0">No hay partidos pendientes.</p>`}</section>
+      <section class="card"><h3>Resultados</h3>${played.map(m => matchRowHtml(D, m)).join("") || `<p class="muted" style="margin:0">Aún no hay resultados.</p>`}</section>`;
+  } else if (P.tab === "goles") body = `<section class="card"><h3>Goleadores</h3>${scorersHtml(stats, 30)}</section>`;
+  else if (P.tab === "tarjetas") body = `<section class="card"><h3>Tarjetas</h3>${cardsHtml(stats)}</section>`;
+  else body = `<section class="card"><h3>Equipos</h3><div class="tlist">${teams.map(t => `<a class="team" href="${esc(torneoLink(D.t.id, t.id))}">${crestHtml(t, 36)}${esc(t.name)}</a>`).join("") || `<p class="muted" style="margin:0">Aún no hay equipos.</p>`}</div></section>`;
+  const tabs = [["tabla", "Posiciones"], ["partidos", "Partidos"], ["goles", "Goleadores"], ["tarjetas", "Tarjetas"], ["equipos", "Equipos"]];
+  const c = D.cats.find(x => x.id === P.cat), rule = ageRuleText(c);
+  app.innerHTML = `${D.cats.length > 1 ? `<div class="chips">${D.cats.map(x => `<button data-cat="${x.id}" aria-pressed="${x.id === P.cat}">${esc(x.name)}</button>`).join("")}</div>` : ""}
+    ${rule ? `<small class="muted">${esc(c.name)} · ${rule}</small>` : ""}
+    <div class="sub">${tabs.map(([k, l]) => `<button data-tab="${k}" aria-pressed="${P.tab === k}">${l}</button>`).join("")}</div>
+    ${body}`;
+  app.querySelectorAll("[data-cat]").forEach(b => (b.onclick = () => { P.cat = b.dataset.cat; render(); }));
+  app.querySelectorAll("[data-tab]").forEach(b => (b.onclick = () => { P.tab = b.dataset.tab; render(); }));
+}
+function renderTeam(team) {
+  app.innerHTML = `<div class="noprint" style="display:flex;gap:8px;flex-wrap:wrap">
+      <a class="btn ghost sm" href="${esc(torneoLink(P.D.t.id))}">← Todo el campeonato</a>
+      <button class="btn sm" onclick="print()">🖨️ Imprimir o guardar PDF</button></div>
+    <section class="card">${teamReportHtml(P.D, team)}</section>`;
+  document.title = `${team.name} · ${P.D.t.name}`;
+}
+load();
+setInterval(() => { if (!document.hidden && !TEAM) loadTournamentData(TID).then(D => { if (D) { P.D = D; render(); } }).catch(() => {}); }, 60000);
+</script>
+</body>
+</html>

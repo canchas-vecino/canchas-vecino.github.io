@@ -18,7 +18,7 @@
     }
   ],
   "id": "./?app=admin",
-  "scope": "./admin.html",
+  "scope": "./admin",
   "lang": "es",
   "description": "Panel de administración de reservas de canchas."
 }

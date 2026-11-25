@@ -72,3 +72,33 @@ h1,h2,h3{font-family:var(--display);text-transform:uppercase;letter-spacing:.4px
 .notice{background:var(--pend-soft);color:var(--fg);border-radius:12px;padding:12px;font-size:14px}
 code{font-family:ui-monospace,Menlo,monospace;background:var(--bg);padding:1px 6px;border-radius:6px;overflow-wrap:anywhere}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+/* ---------- Campeonatos ---------- */
+.crest{display:inline-block;flex:0 0 auto;object-fit:contain;border-radius:50%;background:#fff;vertical-align:middle}
+.crest-ini{display:inline-grid;place-items:center;background:var(--turf-soft);color:var(--turf);font-family:var(--display);font-weight:800;border:1px solid var(--line)}
+.tscroll{overflow-x:auto}
+.ttable{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
+.ttable th{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;padding:6px 4px;border-bottom:1px solid var(--line)}
+.ttable td{padding:7px 4px;border-bottom:1px solid var(--line);text-align:center}
+.ttable .tl{text-align:left}
+.ttable tr.hl td{background:var(--turf-soft);font-weight:700}
+.ttable tr.tot td{font-weight:700;border-bottom:0}
+.tname{display:inline-flex;align-items:center;gap:6px}
+.match{display:flex;flex-direction:column;gap:4px;padding:10px 0;border-top:1px solid var(--line)}
+.match:first-child{border-top:0}
+button.match{background:none;border:0;border-top:1px solid var(--line);text-align:left;cursor:pointer;width:100%;padding:10px 4px;border-radius:0}
+button.match:hover{background:var(--bg)}
+.mline{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:10px;align-items:center}
+.mteam{display:flex;align-items:center;justify-content:flex-end;gap:8px;font-weight:600;min-width:0;overflow-wrap:anywhere;text-align:right}
+.mteam.away{justify-content:flex-start;text-align:left}
+.score{font-family:var(--display);font-size:24px;font-variant-numeric:tabular-nums;min-width:64px;text-align:center}
+.score.vs{font-size:16px;color:var(--muted)}
+.report{display:flex;flex-direction:column;gap:12px}
+.report h3{margin-top:6px}
+.rhead{display:flex;align-items:center;gap:14px}
+.rhead h2{font-size:28px}
+@media print{
+  body{background:#fff;color:#000;padding:0}
+  .noprint{display:none!important}
+  .card{border:0;padding:0}
+  .ttable tr.hl td{background:#e3f1e7}
+}
