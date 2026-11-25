@@ -105,6 +105,50 @@ function matchWhen(m) {
   const d = m.match_date ? dayLabel(m.match_date) : "";
   return [m.round ? `Fecha ${m.round}` : m.phase, d, m.match_time].filter(Boolean).join(" · ");
 }
+// ---------- Programación por día ----------
+// "Sábado 21 de noviembre de 2026"
+function fullDate(iso) {
+  const t = new Date(iso + "T12:00:00Z").toLocaleDateString("es-EC", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).replace(",", "");
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+const matchDays = D => [...new Set(D.matches.filter(m => m.match_date).map(m => m.match_date))].sort();
+// Días que se muestran al abrir: el próximo día con partidos pendientes y, si hay, el día siguiente (fin de semana)
+function defaultDays(D) {
+  const days = matchDays(D); if (!days.length) return [];
+  const today = nowEc().date;
+  const first = days.find(d => d >= today && D.matches.some(m => m.match_date === d && !m.played)) || days.filter(d => d <= today).pop() || days[0];
+  const next = addDays(first, 1);
+  return days.includes(next) ? [first, next] : [first];
+}
+function dayMatches(D, day) {
+  return D.matches.filter(m => m.match_date === day).sort((a, b) => (a.match_time || "99").localeCompare(b.match_time || "99") || String(a.created_at).localeCompare(String(b.created_at)));
+}
+const phaseOf = m => (m.round ? `Fecha ${m.round}` : m.phase || "");
+// Si todos los partidos son de la misma fase (ej. Octavos de final), ese es el título
+function scheduleTitle(D, days) {
+  const ph = [...new Set(days.flatMap(d => dayMatches(D, d)).map(phaseOf))];
+  return ph.length === 1 && ph[0] ? ph[0] : "Programación";
+}
+function dayScheduleHtml(D, days) {
+  const cats = byId(D.cats), many = D.cats.length > 1;
+  return days.map(day => `<section class="card"><h3>${esc(fullDate(day))}</h3>${dayMatches(D, day).map(m =>
+    matchRowHtml(D, m, "", "div", [m.match_time, many && cats[m.category_id] ? cats[m.category_id].name : "", phaseOf(m)].filter(Boolean).join(" · "))).join("")}</section>`).join("");
+}
+// Cartel tipo afiche para compartir por WhatsApp o imprimir
+function cartelHtml(D, days) {
+  const cats = byId(D.cats), tm = byId(D.teams), many = D.cats.length > 1, title = scheduleTitle(D, days);
+  const team = t => `<span class="cteam">${crestHtml(t, 44)}<span>${esc(t ? t.name : "Por definir")}</span></span>`;
+  return `<div class="cartel" id="cartel">
+    <div class="chead">${venueLogoHtml(D.venue, "clogo")}<div><b class="cvenue">${esc(D.venue ? D.venue.name : "")}</b><span class="ctour">${esc(D.t.name)}</span></div></div>
+    <h2 class="ctitle">${esc(title)}</h2>
+    ${days.map(day => `<div class="cday">${esc(fullDate(day))}</div>
+      ${dayMatches(D, day).map(m => { const info = [m.match_time, many && cats[m.category_id] ? cats[m.category_id].name : "", title === "Programación" ? phaseOf(m) : ""].filter(Boolean);
+        return `<div class="crow">${info.length ? `<div class="cinfo">${info.map(esc).join(" &nbsp;|&nbsp; ")}</div>` : ""}
+        <div class="cmatch">${team(tm[m.home_id])}<span class="cvs">${m.played ? `${m.home_goals} - ${m.away_goals}` : "VS"}</span>${team(tm[m.away_id]).replace('class="cteam"', 'class="cteam away"')}</div></div>`; }).join("")}`).join("")}
+    <div class="cfoot">${esc([D.venue && D.venue.place, "Tabla y resultados en " + location.host].filter(Boolean).join(" · "))}</div>
+  </div>`;
+}
+
 function torneoLink(tid, teamId) {
   const u = new URL("torneo.html", location.href); u.search = "";
   u.searchParams.set("t", tid); if (teamId) u.searchParams.set("e", teamId);
@@ -132,10 +176,10 @@ function cardsHtml(stats) {
     ${rows.map(s => `<tr><td class="tl">${esc(s.player.name)}</td><td class="tl"><span class="tname">${crestHtml(s.team, 18)}${esc(s.team.name)}</span></td><td>${s.yellow}</td><td>${s.red}</td></tr>`).join("")}
   </tbody></table>`;
 }
-function matchRowHtml(D, m, attrs = "", tag = "div") {
+function matchRowHtml(D, m, attrs = "", tag = "div", label) {
   const tm = byId(D.teams), h = tm[m.home_id], a = tm[m.away_id];
   const score = m.played ? `<b class="score">${m.home_goals} - ${m.away_goals}</b>` : `<span class="score vs">vs</span>`;
-  return `<${tag} class="match" ${attrs}><small class="muted">${esc(matchWhen(m) || "Sin fecha")}</small>
+  return `<${tag} class="match" ${attrs}><small class="muted">${esc(label ?? (matchWhen(m) || "Sin fecha"))}</small>
     <span class="mline"><span class="mteam">${esc(h ? h.name : "?")} ${crestHtml(h, 26)}</span>${score}<span class="mteam away">${crestHtml(a, 26)} ${esc(a ? a.name : "?")}</span></span></${tag}>`;
 }
 

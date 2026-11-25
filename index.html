@@ -27,6 +27,10 @@
 .ticket{border:1px solid var(--line);border-radius:12px;padding:12px;display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0}
 .ticket dt{color:var(--muted)} .ticket dd{margin:0;font-weight:600}
 .pre{white-space:pre-line;font-size:14px}
+.camp{display:flex;flex-direction:column;gap:8px}
+.camp a{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:12px;padding:12px;text-decoration:none;color:inherit;font-weight:600}
+.camp a small{display:block;font-weight:400;color:var(--muted)}
+.camp a::after{content:"›";margin-left:auto;font-size:22px;color:var(--muted)}
 .loc{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:12px;font-size:14px}
 </style>
 </head>
@@ -37,6 +41,7 @@
     <div><h1>Reserva tu cancha</h1><p id="sub"></p></div>
   </div>
   <main id="app" class="card"><p class="muted">Cargando horarios…</p></main>
+  <section id="camp" class="card camp" hidden></section>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.0/dist/umd/supabase.js"></script>
@@ -75,7 +80,7 @@ async function load() {
     const v = await loadVenue();
     if (v === null) { app.innerHTML = `<p class="err">No se pudieron cargar los horarios. Revisa tu conexión y recarga la página.</p>`; return; }
     if (!v || !v.active) { document.getElementById("sub").textContent = ""; app.innerHTML = `<h2>Cancha no disponible</h2><p class="muted" style="margin:0">Este enlace no corresponde a ninguna cancha activa. Pide el enlace correcto a la cancha.</p>`; return; }
-    S.venue = v; renderVenue(v);
+    S.venue = v; renderVenue(v); loadCamp();
   }
   const V = S.venue.id;
   const today = nowEc().date;
@@ -93,6 +98,17 @@ async function load() {
   S.prices = Object.fromEntries((dp || []).map(r => [r.day, r]));
   document.getElementById("sub").textContent = [S.venue.name, S.venue.place, `${money(st.price)} la hora`].filter(Boolean).join(" · ");
   render();
+}
+
+// Campeonatos activos de esta cancha: tabla, partidos y goleadores
+async function loadCamp() {
+  const box = document.getElementById("camp");
+  const { data, error } = await sb.from("tournaments").select("id,name,season").eq("venue_id", S.venue.id).eq("status", "active").order("created_at", { ascending: false });
+  if (error || !data || !data.length) { box.hidden = true; return; }
+  box.innerHTML = `<h3 style="margin:0">🏆 Campeonatos</h3>
+    <p class="muted" style="margin:0;font-size:13px">Tabla de posiciones, próximos partidos, resultados y goleadores.</p>
+    ${data.map(t => `<a href="torneo.html?t=${encodeURIComponent(t.id)}"><span style="font-size:24px">🏆</span><span>${esc(t.name)}${t.season ? `<small>${esc(t.season)}</small>` : ""}</span></a>`).join("")}`;
+  box.hidden = false;
 }
 
 function slotState(day, h) {

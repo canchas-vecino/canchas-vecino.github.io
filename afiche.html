@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Afiche con código QR</title>
+<meta name="color-scheme" content="light">
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Figtree:wght@400;500;600;700&display=swap">
+<style>
+:root{--turf:#1f7a3f;--turf-dark:#145a2d;--ink:#10231a;--muted:#5b6b62;--line:#d5e2d9;--display:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;--body:Figtree,system-ui,sans-serif}
+*{box-sizing:border-box}
+html,body{margin:0;background:#e9efeb;color:var(--ink);font-family:var(--body)}
+.bar{max-width:794px;margin:0 auto;padding:16px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+.bar p{margin:0;font-size:14px;color:var(--muted);flex:1 1 240px}
+.bar button{border:0;background:var(--turf);color:#fff;font:700 16px var(--body);padding:12px 18px;border-radius:12px;cursor:pointer}
+.page{width:210mm;height:297mm;margin:0 auto 24px;background:#fff;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 6px 30px rgb(0 0 0 / .15);-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.top{background:var(--turf);color:#fff;padding:14mm 14mm 12mm;display:flex;align-items:center;gap:8mm;position:relative;overflow:hidden}
+.top::after{content:"";position:absolute;right:-30mm;top:50%;width:70mm;height:70mm;border:1.2mm solid rgb(255 255 255 / .25);border-radius:50%;transform:translateY(-50%)}
+.top .logo{width:34mm;height:34mm;object-fit:contain;flex:none;filter:drop-shadow(0 2mm 3mm rgb(0 0 0 / .3))}
+.top .logo-ini{display:grid;place-items:center;border-radius:50%;background:#fff;color:var(--turf);font:800 16mm var(--display)}
+.top h1{font:800 15mm/1 var(--display);text-transform:uppercase;margin:0;letter-spacing:.3mm}
+.top p{margin:2mm 0 0;font-size:6mm;opacity:.92}
+.mid{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6mm;padding:8mm 14mm}
+.mid h2{font:800 17mm/1 var(--display);text-transform:uppercase;margin:0;text-align:center;color:var(--turf-dark)}
+.qr{width:108mm;height:108mm;padding:4mm;border:1.2mm solid var(--turf);border-radius:6mm;background:#fff}
+.qr svg{width:100%;height:100%;display:block}
+.url{font:600 5mm var(--body);color:var(--muted);overflow-wrap:anywhere;text-align:center}
+.list{display:grid;grid-template-columns:repeat(3,1fr);gap:5mm;padding:0 14mm 10mm}
+.it{background:#eef6f0;border-radius:5mm;padding:5mm;text-align:center}
+.it b{display:block;font:800 7.5mm/1.05 var(--display);text-transform:uppercase;margin:2mm 0 1mm}
+.it span{font-size:4.2mm;color:var(--muted)}
+.it i{font-style:normal;font-size:10mm}
+.foot{background:var(--ink);color:#fff;padding:6mm 14mm;display:flex;justify-content:space-between;gap:6mm;font-size:5mm;align-items:center}
+.foot b{font-family:var(--display);font-size:7mm}
+.err{max-width:600px;margin:40px auto;padding:16px;background:#fff;border-radius:12px}
+@page{size:A4;margin:0}
+@media print{html,body{background:#fff}.bar{display:none}.page{margin:0;box-shadow:none}}
+@media screen and (max-width:830px){.page{zoom:calc(100vw / 830px)}}
+</style>
+</head>
+<body>
+<div class="bar"><p>Imprímelo en tamaño A4 y pégalo en un lugar visible de la cancha. También puedes elegir “Guardar como PDF” para mandarlo a imprimir.</p><button id="print" type="button">🖨️ Imprimir o guardar PDF</button></div>
+<div id="out"><p class="err">Cargando…</p></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.0/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<script src="config.js"></script>
+<script src="common.js"></script>
+<script>
+const out = document.getElementById("out");
+document.getElementById("print").onclick = () => print();
+
+async function load() {
+  if (!sb) return setupMissing(out);
+  const slug = venueSlug();
+  let q = sb.from("venues").select("*");
+  q = slug ? q.eq("slug", slug) : q.eq("is_default", true);
+  const { data: v, error } = await q.maybeSingle();
+  if (error || !v) { out.innerHTML = `<p class="err">No se encontró la cancha. Abre el afiche desde el panel de administración.</p>`; return; }
+  const { data: st } = await sb.from("settings").select("admin_whatsapp,address,maps_url").eq("venue_id", v.id).maybeSingle();
+  const link = venueLink(v).replace(/afiche\.html$/, "");
+  const qr = qrcode(0, "M"); qr.addData(link); qr.make();
+  const phone = st && st.admin_whatsapp ? String(st.admin_whatsapp).replace(/^593/, "0") : "";
+  const items = [["📅", "Reserva la cancha", "Mira las horas libres y separa la tuya"], ["🏆", "Campeonatos", "Tabla, partidos, resultados y goleadores"]];
+  if (st && st.maps_url) items.push(["📍", "Cómo llegar", "Ubicación en Google Maps"]);
+  document.title = `Afiche · ${venueLabel(v)}`;
+  out.innerHTML = `<section class="page">
+    <div class="top">${venueLogoHtml(v, "logo")}<div><h1>${esc(v.name)}</h1>${v.place || (st && st.address) ? `<p>${esc(v.place || st.address)}</p>` : ""}</div></div>
+    <div class="mid">
+      <h2>Escanea con tu celular</h2>
+      <div class="qr">${qr.createSvgTag({ cellSize: 8, margin: 0, scalable: true, alt: "Código QR de " + venueLabel(v) })}</div>
+      <div class="url">${esc(link)}</div>
+    </div>
+    <div class="list" style="grid-template-columns:repeat(${items.length},1fr)">${items.map(i => `<div class="it"><i>${i[0]}</i><b>${i[1]}</b><span>${i[2]}</span></div>`).join("")}</div>
+    <div class="foot"><span>Sin descargar nada. Funciona en cualquier celular.</span>${phone ? `<span>Dudas por WhatsApp<br><b>${esc(phone)}</b></span>` : ""}</div>
+  </section>`;
+}
+load();
+</script>
+</body>
+</html>

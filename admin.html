@@ -220,6 +220,7 @@ function venueCard(v) {
       <button class="btn sm" data-open="${v.id}">Abrir agenda</button>
       <button class="btn ghost sm" data-vcopy="${esc(link)}">Copiar enlace</button>
       <a class="btn wa sm" href="https://wa.me/?text=${encodeURIComponent("⚽ Reserva tu cancha en " + venueLabel(v) + ". Mira las horas libres y separa la tuya aquí: " + link)}" target="_blank" rel="noopener">Compartir</a>
+      <a class="btn ghost sm" href="${aficheUrl(v)}" target="_blank" rel="noopener">🖨️ Afiche QR</a>
       <a class="btn ghost sm" href="admin-campeonatos.html" data-camp="${v.id}">🏆 Campeonatos</a>
       <button class="btn ghost sm" data-adm="${v.id}" aria-expanded="${open}">👤 Administradores</button>
       ${v.is_default ? "" : `<button class="btn ${v.active ? "warn" : ""} sm" data-active="${v.id}" data-on="${v.active ? 0 : 1}">${v.active ? "Pausar" : "Activar"}</button>`}
@@ -480,12 +481,14 @@ function remindersCard() {
     ${list.length ? list.map(r => `<a class="btn wa sm" style="text-align:left" data-remind="${r.id}" href="${waLink(r.phone, reminderText(r))}" target="_blank" rel="noopener">${r.day === nowEc().date ? "Hoy" : "Mañana"} ${fmtH(r.hour)} · ${esc(r.name)}</a>`).join("") : `<p style="margin:0">✓ No hay recordatorios pendientes.</p>`}
   </div>`;
 }
+const aficheUrl = v => "afiche.html" + (v && !v.is_default ? "?c=" + encodeURIComponent(v.slug) : "");
 function shareCard() {
   return `<div class="card"><h3>Enlace para clientes</h3>
     <p class="muted" style="margin:0;font-size:13px">Compártelo por WhatsApp, en estados o grupos. Los clientes ven las horas libres y reservan solos.</p>
     <code id="link">${esc(publicUrl())}</code>
     <a class="btn wa block" href="https://wa.me/?text=${encodeURIComponent("⚽ Reserva tu cancha en " + place() + ". Mira las horas libres y separa la tuya aquí: " + publicUrl())}" target="_blank" rel="noopener">Compartir por WhatsApp</a>
-    <button class="btn ghost block" id="copy">Copiar enlace</button></div>`;
+    <button class="btn ghost block" id="copy">Copiar enlace</button>
+    <a class="btn ghost block" href="${aficheUrl(A.venue)}" target="_blank" rel="noopener">🖨️ Afiche con código QR para imprimir</a></div>`;
 }
 function bindShare() {
   if (!$("copy")) return;

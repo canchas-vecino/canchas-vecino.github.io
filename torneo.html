@@ -20,22 +20,47 @@
 .sub button[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
 .tlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
 .team{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:12px;padding:10px;background:var(--surface);text-decoration:none;color:inherit;font-weight:600}
-@media print{.hero{background:none;color:#000;padding:0}}
+.days2{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px}
+.days2 button{flex:0 0 auto;border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:6px 12px;font-weight:600;font-size:13px;cursor:pointer;text-align:center;line-height:1.2}
+.days2 button b{display:block;font:700 20px var(--display)}
+.days2 button[aria-pressed="true"]{background:var(--turf);color:var(--turf-ink);border-color:var(--turf)}
+/* Cartel para compartir */
+.cartel{width:1080px;max-width:none;background:radial-gradient(ellipse at 50% 0,#1d4fb8 0,#0b2a6b 45%,#06163d 100%);color:#fff;padding:48px 56px 40px;display:flex;flex-direction:column;gap:18px;font-family:var(--display);transform-origin:top left}
+.chead{display:flex;align-items:center;gap:24px}
+.chead .clogo{width:150px;height:150px;object-fit:contain;filter:drop-shadow(0 6px 10px rgb(0 0 0 / .5))}
+.chead .logo-ini{width:150px;height:150px;font-size:60px;background:#ffd21f;color:#0b2a6b;border-color:#fff}
+.cvenue{display:block;font-size:76px;font-weight:800;text-transform:uppercase;line-height:1;font-style:italic;letter-spacing:1px}
+.ctour{display:block;font:600 30px var(--body);opacity:.85;margin-top:6px}
+.ctitle{font-size:72px;font-weight:800;text-transform:uppercase;font-style:italic;color:#ffd21f;text-align:center;margin:4px 0;letter-spacing:1px}
+.cday{background:linear-gradient(90deg,#ffb800,#ffe14d,#ffb800);color:#0b1d45;font-size:40px;font-weight:800;text-transform:uppercase;text-align:center;padding:8px 16px;border-radius:10px;transform:skewX(-8deg);margin-top:10px}
+.crow{display:flex;flex-direction:column;gap:6px}
+.cinfo{text-align:center;font-size:30px;font-weight:700;color:#fff}
+.cmatch{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px}
+.cteam{display:flex;align-items:center;gap:12px;background:linear-gradient(180deg,#1f5fd6,#0d3a96);border:2px solid #5fa0ff;border-radius:12px;padding:8px 16px;min-height:72px;font-size:32px;font-weight:700;text-transform:uppercase;line-height:1.05;box-shadow:0 0 16px rgb(80 150 255 / .45)}
+.cteam.away{flex-direction:row-reverse;text-align:right}
+.cteam span{flex:1}
+.cteam .crest{flex:none;background:#fff}
+.cvs{min-width:110px;text-align:center;background:linear-gradient(180deg,#ffe14d,#ffb800);color:#0b1d45;font-size:42px;font-weight:800;padding:8px 14px;border-radius:12px;clip-path:polygon(15% 0,85% 0,100% 50%,85% 100%,15% 100%,0 50%)}
+.cfoot{margin-top:14px;text-align:center;font-size:30px;font-weight:700;text-transform:uppercase;background:rgb(0 0 0 / .35);border:2px solid #5fa0ff;border-radius:12px;padding:10px}
+.cwrap{overflow:hidden}
+@media print{.noprint{display:none!important}.hero{background:none;color:#000;padding:0}}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="hero" id="hero"><div><h1>Campeonato</h1></div></div>
   <main id="app" style="display:flex;flex-direction:column;gap:14px"><p class="muted">Cargando…</p></main>
+  <a class="btn ghost block noprint" id="reservar" hidden>📅 Reservar la cancha</a>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.0/dist/umd/supabase.js"></script>
 <script src="config.js"></script>
 <script src="common.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="torneo.js"></script>
 <script>
-const P = { D: null, cat: null, tab: "tabla" };
-const q = new URLSearchParams(location.search), TID = q.get("t"), TEAM = q.get("e");
+const q = new URLSearchParams(location.search), TID = q.get("t"), TEAM = q.get("e"), CARTEL = q.get("cartel");
+const P = { D: null, cat: null, tab: q.get("tab") || "tabla", days: null };
 const app = document.getElementById("app");
 
 async function load() {
@@ -46,9 +71,11 @@ async function load() {
   const D = P.D;
   document.title = D.t.name;
   document.getElementById("hero").innerHTML = `${venueLogoHtml(D.venue)}<div><h1>${esc(D.t.name)}</h1><p>${esc(venueLabel(D.venue))}${D.t.season ? " · " + esc(D.t.season) : ""}${D.t.status === "finished" ? " · Terminado" : ""}</p></div>`;
+  const rl = document.getElementById("reservar"); rl.href = venueLink(D.venue); rl.hidden = false;
   const team = TEAM && D.teams.find(t => t.id === TEAM);
   if (team) P.cat = team.category_id;
   if (!P.cat || !D.cats.some(c => c.id === P.cat)) P.cat = D.cats[0] ? D.cats[0].id : null;
+  if (CARTEL !== null) return renderCartel(CARTEL ? CARTEL.split(",") : defaultDays(D));
   team ? renderTeam(team) : render();
 }
 function render() {
@@ -58,6 +85,7 @@ function render() {
   const groups = ss.length ? ss.map(s => ({ id: s.id, label: "Serie " + s.name, teams: teams.filter(t => t.series_id === s.id) })) : [{ id: null, label: "Posiciones", teams }];
   const ms = D.matches.filter(m => m.category_id === P.cat), stats = playerStats(D, P.cat);
   let body = "";
+  if (P.tab === "dia") return renderDia();
   if (P.tab === "tabla") body = groups.map(g => `<section class="card"><h3>${esc(g.label)}</h3>${standingsHtml(standings(D, g.teams, g.id === null ? undefined : g.id))}</section>`).join("");
   else if (P.tab === "partidos") {
     const played = ms.filter(m => m.played).reverse(), next = ms.filter(m => !m.played);
@@ -66,7 +94,7 @@ function render() {
   } else if (P.tab === "goles") body = `<section class="card"><h3>Goleadores</h3>${scorersHtml(stats, 30)}</section>`;
   else if (P.tab === "tarjetas") body = `<section class="card"><h3>Tarjetas</h3>${cardsHtml(stats)}</section>`;
   else body = `<section class="card"><h3>Equipos</h3><div class="tlist">${teams.map(t => `<a class="team" href="${esc(torneoLink(D.t.id, t.id))}">${crestHtml(t, 36)}${esc(t.name)}</a>`).join("") || `<p class="muted" style="margin:0">Aún no hay equipos.</p>`}</div></section>`;
-  const tabs = [["tabla", "Posiciones"], ["partidos", "Partidos"], ["goles", "Goleadores"], ["tarjetas", "Tarjetas"], ["equipos", "Equipos"]];
+  const tabs = [["dia", "📅 Por día"], ["tabla", "Posiciones"], ["partidos", "Partidos"], ["goles", "Goleadores"], ["tarjetas", "Tarjetas"], ["equipos", "Equipos"]];
   const c = D.cats.find(x => x.id === P.cat), rule = ageRuleText(c);
   app.innerHTML = `${D.cats.length > 1 ? `<div class="chips">${D.cats.map(x => `<button data-cat="${x.id}" aria-pressed="${x.id === P.cat}">${esc(x.name)}</button>`).join("")}</div>` : ""}
     ${rule ? `<small class="muted">${esc(c.name)} · ${rule}</small>` : ""}
@@ -74,6 +102,50 @@ function render() {
     ${body}`;
   app.querySelectorAll("[data-cat]").forEach(b => (b.onclick = () => { P.cat = b.dataset.cat; render(); }));
   app.querySelectorAll("[data-tab]").forEach(b => (b.onclick = () => { P.tab = b.dataset.tab; render(); }));
+}
+// Todos los partidos de uno o varios días, de todas las categorías
+function renderDia() {
+  const D = P.D, days = matchDays(D);
+  if (!P.days) P.days = defaultDays(D);
+  P.days = P.days.filter(d => days.includes(d));
+  const tabs = [["dia", "📅 Por día"], ["tabla", "Posiciones"], ["partidos", "Partidos"], ["goles", "Goleadores"], ["tarjetas", "Tarjetas"], ["equipos", "Equipos"]];
+  const sel = [...P.days].sort();
+  app.innerHTML = `<div class="sub">${tabs.map(([k, l]) => `<button data-tab="${k}" aria-pressed="${P.tab === k}">${l}</button>`).join("")}</div>
+    ${days.length ? `<small class="muted">Toca uno o varios días.</small>
+    <div class="days2">${days.map(d => { const p = dayParts(d); return `<button data-day="${d}" aria-pressed="${sel.includes(d)}">${p.dow}<b>${p.d}</b>${p.m}</button>`; }).join("")}</div>
+    ${sel.length ? dayScheduleHtml(D, sel) + `<a class="btn block" href="${esc(cartelLink(sel))}">🖼️ Ver cartel para compartir</a>` : `<p class="muted">Elige un día.</p>`}`
+    : `<section class="card"><p class="muted" style="margin:0">Todavía no hay partidos con fecha.</p></section>`}`;
+  app.querySelectorAll("[data-tab]").forEach(b => (b.onclick = () => { P.tab = b.dataset.tab; render(); }));
+  app.querySelectorAll("[data-day]").forEach(b => (b.onclick = () => { const d = b.dataset.day; P.days = P.days.includes(d) ? P.days.filter(x => x !== d) : [...P.days, d]; renderDia(); }));
+}
+function cartelLink(days) { const u = new URL(torneoLink(TID)); u.searchParams.set("cartel", days.join(",")); return u.href; }
+function renderCartel(days) {
+  const D = P.D;
+  document.getElementById("hero").hidden = true; document.getElementById("reservar").hidden = true;
+  document.querySelector(".wrap").style.maxWidth = "1080px";
+  app.innerHTML = `<div class="noprint" style="display:flex;gap:8px;flex-wrap:wrap">
+      <a class="btn ghost sm" href="${esc(torneoLink(TID))}&tab=dia">← Volver</a>
+      <button class="btn sm" id="c-share">📤 Compartir imagen</button>
+      <button class="btn ghost sm" id="c-down">📥 Descargar imagen</button></div>
+    ${days.length ? `<div class="cwrap" id="cwrap">${cartelHtml(D, days)}</div>` : `<p class="muted">No hay partidos con fecha.</p>`}`;
+  document.title = `${scheduleTitle(D, days)} · ${D.t.name}`;
+  const fit = () => { const c = document.getElementById("cartel"); if (!c) return; const k = Math.min(1, document.getElementById("cwrap").clientWidth / 1080); c.style.transform = `scale(${k})`; document.getElementById("cwrap").style.height = c.offsetHeight * k + "px"; };
+  fit(); addEventListener("resize", fit); document.fonts && document.fonts.ready.then(fit);
+  const name = `${scheduleTitle(D, days)} ${days[0] || ""}.png`.replace(/[^\w .-]+/g, "");
+  async function image() {
+    const c = document.getElementById("cartel"); const prev = c.style.transform; c.style.transform = "none";
+    try { await (document.fonts ? document.fonts.ready : 0); const cv = await html2canvas(c, { useCORS: true, backgroundColor: null, scale: 1 }); return await new Promise(r => cv.toBlob(r, "image/png")); }
+    finally { c.style.transform = prev; }
+  }
+  const down = async () => { const blob = await image(); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); };
+  document.getElementById("c-down").onclick = () => down().catch(() => toast("No se pudo crear la imagen. Toma una captura de pantalla."));
+  document.getElementById("c-share").onclick = async () => {
+    try {
+      const file = new File([await image()], name, { type: "image/png" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file], title: D.t.name });
+      else { await down(); toast("Imagen descargada. Ahora envíala por WhatsApp."); }
+    } catch (e) { if (e && e.name !== "AbortError") toast("No se pudo compartir. Usa Descargar imagen."); }
+  };
 }
 function renderTeam(team) {
   app.innerHTML = `<div class="noprint" style="display:flex;gap:8px;flex-wrap:wrap">
@@ -83,7 +155,7 @@ function renderTeam(team) {
   document.title = `${team.name} · ${P.D.t.name}`;
 }
 load();
-setInterval(() => { if (!document.hidden && !TEAM) loadTournamentData(TID).then(D => { if (D) { P.D = D; render(); } }).catch(() => {}); }, 60000);
+setInterval(() => { if (!document.hidden && !TEAM && CARTEL === null) loadTournamentData(TID).then(D => { if (D) { P.D = D; render(); } }).catch(() => {}); }, 60000);
 </script>
 </body>
 </html>

@@ -258,6 +258,9 @@ function partidosHtml() {
   const teams = catTeams(), ms = C.D.matches.filter(m => m.category_id === C.cat);
   const topt = teams.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
   return `<div style="display:flex;flex-direction:column;gap:16px">
+    <section class="card"><h3>Programación por día</h3>
+      <p class="muted" style="margin:0;font-size:13px">Todos los partidos de un día (de todas las categorías) y un cartel listo para compartir por WhatsApp.</p>
+      <a class="btn sm" href="${esc(torneoLink(C.D.t.id))}&tab=dia" target="_blank" rel="noopener">📅 Ver programación y cartel</a></section>
     <section class="card"><h3>Calendario</h3>
       <p class="muted" style="margin:0;font-size:13px">Genera automáticamente "todos contra todos" dentro de cada serie, o agrega partidos uno por uno (por ejemplo, semifinales y final).</p>
       <div class="row">${groups().map(g => { const has = ms.some(m => (m.series_id || null) === g.id); return has
@@ -290,7 +293,7 @@ function matchEditorHtml() {
   return `<section class="card"><button class="btn ghost sm" data-act="m-close" style="align-self:flex-start">← Partidos</button>
     <div class="mline"><span class="mteam">${esc(h.name)} ${crestHtml(h, 40)}</span><b class="score">${g(h.id)} - ${g(a.id)}</b><span class="mteam away">${crestHtml(a, 40)} ${esc(a.name)}</span></div>
     <p class="muted" style="margin:0;text-align:center;font-size:13px">${m.played ? "✓ Resultado guardado" : "Aún sin resultado"} · el marcador se calcula con los goles que registres</p>
-    <div class="row"><div class="field"><label for="me-phase">Fase</label><input id="me-phase" value="${esc(dr.phase)}" list="phases2"><datalist id="phases2"><option>Fase de grupos</option><option>Cuartos de final</option><option>Semifinal</option><option>Final</option></datalist></div>
+    <div class="row"><div class="field"><label for="me-phase">Fase</label><input id="me-phase" value="${esc(dr.phase)}" list="phases2"><datalist id="phases2"><option>Fase de grupos</option><option>Octavos de final</option><option>Cuartos de final</option><option>Semifinal</option><option>Tercer lugar</option><option>Final</option></datalist></div>
       <div class="field"><label for="me-date">Fecha</label><input id="me-date" type="date" value="${esc(dr.date)}"></div>
       <div class="field sm"><label for="me-time">Hora</label><input id="me-time" type="time" value="${esc(dr.time)}"></div></div>
     <button class="btn ghost sm" data-act="m-when" style="align-self:flex-start">Guardar fecha y hora</button>
