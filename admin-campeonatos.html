@@ -38,6 +38,17 @@ header.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-
 .ph .num{position:absolute;right:-2px;bottom:-2px;background:var(--fg);color:var(--bg);border-radius:999px;font:700 11px var(--body);padding:1px 5px}
 .pl small{display:block;color:var(--muted);font-size:12px}
 .pl .warn{color:var(--danger);font-weight:600}
+.lgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.lp{display:flex;align-items:center;gap:8px;border:2px solid var(--line);border-radius:12px;padding:8px;background:var(--surface);cursor:pointer;text-align:left;font:inherit;color:inherit}
+.lp img,.lp .noph{width:56px;height:56px;border-radius:10px;object-fit:cover;flex:none;background:var(--bg);display:grid;place-items:center;font-size:22px}
+.lp b{display:block;font-size:14px;line-height:1.2}
+.lp small{display:block;color:var(--muted);font-size:12px}
+.lp[aria-pressed="true"]{border-color:var(--turf);background:var(--turf-soft)}
+.lp[aria-pressed="true"] b::before{content:"✓ ";color:var(--turf)}
+.lp[data-role="sub"]{border-color:var(--pend);background:transparent}
+.lp .rl{display:inline-block;font:700 11px var(--body);font-style:normal;text-transform:uppercase;background:var(--turf);color:var(--turf-ink);border-radius:6px;padding:1px 6px;margin-bottom:2px}
+.lp[data-role="sub"] .rl{background:var(--pend);color:#000}
+.lp .warn{color:var(--danger);font-weight:600}
 .ev{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--line);font-size:14px}
 .tcard{display:flex;flex-direction:column;gap:8px}
 .tcard h3{font-size:22px}
@@ -132,12 +143,28 @@ function renderList() {
 async function openTournament(tid) {
   const D = await loadTournamentData(tid, true).catch(() => null);
   if (!D || D.t.venue_id !== C.venue.id) { toast("No se encontró el campeonato."); return loadList(); }
+  D.links = await coachLinks(D);
   C.D = D;
   if (!C.cat || !D.cats.some(c => c.id === C.cat)) C.cat = D.cats[0] ? D.cats[0].id : null;
   history.replaceState(null, "", "admin-campeonatos.html?t=" + tid);
   render();
 }
 const reload = () => openTournament(C.D.t.id);
+// Enlace secreto de cada técnico para llenar su planilla (se crea solo la primera vez)
+async function coachLinks(D) {
+  const ids = D.teams.map(t => t.id); if (!ids.length) return {};
+  const get = () => sb.from("t_coach_links").select("team_id,token").in("team_id", ids);
+  let { data, error } = await get(); if (error) return {};
+  const missing = ids.filter(id => !data.some(l => l.team_id === id));
+  if (missing.length && !(await sb.from("t_coach_links").insert(missing.map(team_id => ({ team_id })))).error) ({ data } = await get());
+  return Object.fromEntries((data || []).map(l => [l.team_id, l.token]));
+}
+function coachUrl(teamId) { const k = C.D.links && C.D.links[teamId]; if (!k) return ""; const u = new URL("planilla.html", location.href); u.search = "?k=" + k; return u.href; }
+function coachMsg(t) { return `⚽ ${C.D.t.name}\nHola${t.coach_name ? " " + t.coach_name : ""}, aquí puedes llenar la planilla de ${t.name} antes de cada partido: marca quién viene, titulares y suplentes.\n${coachUrl(t.id)}\nEste enlace es solo para el técnico, no lo compartas.`; }
+function coachWaHtml(t, label = "📋 Enlace de planilla") {
+  if (!coachUrl(t.id)) return "";
+  return `<a class="btn ghost sm" href="${t.coach_phone ? waLink(t.coach_phone, coachMsg(t)) : "https://wa.me/?text=" + encodeURIComponent(coachMsg(t))}" target="_blank" rel="noopener">${label}</a>`;
+}
 const cat = () => C.D.cats.find(c => c.id === C.cat);
 const catTeams = () => C.D.teams.filter(t => t.category_id === C.cat);
 const catSeries = () => C.D.series.filter(s => s.category_id === C.cat).sort((a, b) => a.name.localeCompare(b.name));
@@ -289,7 +316,9 @@ function matchEditorHtml() {
   const g = id => evs.filter(e => e.kind === "goal" && e.team_id === id).length;
   const sideTeam = C.evTeam === a.id ? a : h;
   const dr = C.draft && C.draft.id === m.id ? C.draft : { phase: m.phase, date: m.match_date || "", time: m.match_time };
-  const players = C.D.players.filter(p => p.team_id === sideTeam.id);
+  const inLineup = new Set(C.D.lineups.filter(l => l.match_id === m.id).map(l => l.player_id));
+  let players = C.D.players.filter(p => p.team_id === sideTeam.id);
+  if (players.some(p => inLineup.has(p.id))) players = players.filter(p => inLineup.has(p.id));
   return `<section class="card"><button class="btn ghost sm" data-act="m-close" style="align-self:flex-start">← Partidos</button>
     <div class="mline"><span class="mteam">${esc(h.name)} ${crestHtml(h, 40)}</span><b class="score">${g(h.id)} - ${g(a.id)}</b><span class="mteam away">${crestHtml(a, 40)} ${esc(a.name)}</span></div>
     <p class="muted" style="margin:0;text-align:center;font-size:13px">${m.played ? "✓ Resultado guardado" : "Aún sin resultado"} · el marcador se calcula con los goles que registres</p>
@@ -297,6 +326,7 @@ function matchEditorHtml() {
       <div class="field"><label for="me-date">Fecha</label><input id="me-date" type="date" value="${esc(dr.date)}"></div>
       <div class="field sm"><label for="me-time">Hora</label><input id="me-time" type="time" value="${esc(dr.time)}"></div></div>
     <button class="btn ghost sm" data-act="m-when" style="align-self:flex-start">Guardar fecha y hora</button>
+    ${lineupHtml(m, h, a)}
     <h3>Goles y tarjetas</h3>
     <div class="row"><div class="field"><label for="ev-team">Equipo</label><select id="ev-team"><option value="${h.id}" ${sideTeam.id === h.id ? "selected" : ""}>${esc(h.name)}</option><option value="${a.id}" ${sideTeam.id === a.id ? "selected" : ""}>${esc(a.name)}</option></select></div>
       <div class="field"><label for="ev-player">Jugador</label><select id="ev-player">${players.map(p => `<option value="${p.id}">${p.number != null ? p.number + " · " : ""}${esc(p.name)}</option>`).join("")}<option value="">— Sin registrar / autogol —</option></select></div></div>
@@ -310,6 +340,48 @@ function matchEditorHtml() {
       ${m.played ? `<button class="btn ghost sm" data-act="m-unplay">Marcar como no jugado</button>` : ""}
       <button class="btn warn sm" data-act="m-del">Eliminar partido</button></div>
   </section>`;
+}
+
+/* Planilla del partido: el organizador marca quién juega, viendo la foto y la cédula */
+function redLastMatch(m, team, playerId) {
+  // ¿Tuvo roja en el partido anterior de su equipo? (posible suspensión)
+  const prev = C.D.matches.filter(x => x.id !== m.id && x.played && (x.home_id === team.id || x.away_id === team.id) && x.match_date && m.match_date && x.match_date < m.match_date)
+    .sort((x, y) => (x.match_date + x.match_time).localeCompare(y.match_date + y.match_time)).pop();
+  return !!prev && C.D.events.some(e => e.match_id === prev.id && e.player_id === playerId && e.kind === "red");
+}
+function lineupHtml(m, h, a) {
+  const side = C.lnTeam === a.id ? a : h, cat = C.D.cats.find(c => c.id === m.category_id);
+  const lu = C.D.lineups.filter(l => l.match_id === m.id), role = Object.fromEntries(lu.map(l => [l.player_id, l.role || "starter"]));
+  const count = t => lu.filter(l => l.team_id === t.id).length;
+  const tit = lu.filter(l => l.team_id === side.id && (l.role || "starter") === "starter").length, sup = lu.filter(l => l.team_id === side.id && l.role === "sub").length;
+  const players = C.D.players.filter(p => p.team_id === side.id);
+  return `<h3>📋 Planilla del partido</h3>
+    <p class="muted" style="margin:0;font-size:13px">El técnico la puede llenar con su enlace, o tú aquí: toca una vez = titular, dos veces = suplente, tres = no juega. Antes de empezar, compara la foto y la cédula con cada jugador.</p>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">${[h, a].map(t => `<button class="btn ${t.id === side.id ? "" : "ghost"} sm" data-act="ln-team" data-id="${t.id}">${esc(t.name)} · ${count(t)}</button>`).join("")}</div>
+    ${players.length ? `<div class="lgrid">${players.map(p => { const age = ageOn(p.birth_date, m.match_date || nowEc().date), w = ageProblem(cat, p), red = redLastMatch(m, side, p.id);
+      return `<button class="lp" data-act="ln-toggle" data-id="${p.id}" aria-pressed="${!!role[p.id]}" data-role="${role[p.id] || ""}">${p.photo_url ? `<img src="${esc(p.photo_url)}" alt="">` : `<span class="noph" aria-hidden="true">👤</span>`}
+        <span>${role[p.id] ? `<i class="rl">${role[p.id] === "sub" ? "Suplente" : "Titular"}</i>` : ""}<b>${p.number != null ? p.number + " · " : ""}${esc(p.name)}</b><small>${[p.cedula ? "CI " + esc(p.cedula) : "", age !== null ? age + " años" : ""].filter(Boolean).join(" · ")}</small>${w ? `<small class="warn">⚠️ ${esc(w)}</small>` : ""}${red ? `<small class="warn">🟥 Roja en el partido anterior</small>` : ""}</span></button>`; }).join("")}</div>`
+      : `<p class="muted" style="margin:0">Este equipo no tiene jugadores inscritos. Inscríbelos en Equipos.</p>`}
+    <p style="margin:0;font-size:14px"><b>${tit}</b> titulares · <b>${sup}</b> suplentes</p>
+    <div class="row"><button class="btn ghost sm" data-act="ln-all" data-id="${side.id}">Marcar a todos</button>
+      ${coachWaHtml(side, "📲 Enviar enlace al técnico")}
+      <button class="btn ghost sm" data-act="ln-refresh">🔄 Ver lo que envió el técnico</button>
+      <button class="btn ghost sm" data-act="ln-print">🖨️ Imprimir planilla</button></div>`;
+}
+function printLineup(m) {
+  const tm = byId(C.D.teams), cat = C.D.cats.find(c => c.id === m.category_id), lu = C.D.lineups.filter(l => l.match_id === m.id);
+  const sheet = t => { const role = Object.fromEntries(lu.filter(l => l.team_id === t.id).map(l => [l.player_id, l.role || "starter"]));
+    const ps = C.D.players.filter(p => role[p.id]).sort((x, y) => (role[x.id] === role[y.id] ? 0 : role[x.id] === "starter" ? -1 : 1));
+    return `<section><h2>${crestHtml(t, 36)} ${esc(t.name)}</h2><table class="ttable"><thead><tr><th>Foto</th><th>#</th><th class="tl">Jugador</th><th class="tl">Cédula</th><th class="tl">Va de</th></tr></thead><tbody>
+      ${ps.map(p => `<tr><td>${p.photo_url ? `<img class="pphoto" src="${esc(p.photo_url)}" alt="">` : ""}</td><td>${p.number ?? ""}</td><td class="tl">${esc(p.name)}</td><td class="tl">${esc(p.cedula || "")}</td><td class="tl">${role[p.id] === "sub" ? "Suplente" : "Titular"}</td></tr>`).join("") || `<tr><td colspan="5">Sin jugadores marcados</td></tr>`}
+      </tbody></table><p>Técnico: ${esc(t.coach_name || "")} &nbsp; Firma: ____________________</p></section>`; };
+  const w = open("", "_blank"); if (!w) return toast("Permite las ventanas emergentes para imprimir.");
+  w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Planilla</title><link rel="stylesheet" href="${new URL("styles.css", location.href)}">
+    <style>body{padding:20px;background:#fff;color:#000}h1{font-size:28px}h2{display:flex;align-items:center;gap:8px;font-size:22px;margin-top:18px}section{break-inside:avoid}.ttable td,.ttable th{padding:6px}</style></head><body>
+    <h1>${esc(C.D.t.name)} · Planilla de juego</h1><p>${esc([cat && cat.name, m.phase, m.match_date ? fullDate(m.match_date) : "", m.match_time].filter(Boolean).join(" · "))}</p>
+    ${sheet(tm[m.home_id])}${sheet(tm[m.away_id])}<p style="margin-top:24px">Vocal / árbitro: ____________________</p>
+    <script>addEventListener("load",()=>setTimeout(()=>print(),400))<\/script></body></html>`);
+  w.document.close();
 }
 
 /* Tabla */
@@ -334,10 +406,11 @@ function reportesHtml() {
         <button class="btn ghost sm" data-act="copy" data-id="${esc(link)}">Copiar enlace</button></div>
     </section>
     <section class="card"><h3>Reporte para cada técnico · ${esc(cat().name)}</h3>
-      <p class="muted" style="margin:0;font-size:13px">Cada reporte trae la tabla de su serie, sus jugadores con goles y tarjetas, y sus partidos. Se puede imprimir o guardar como PDF.</p>
+      <p class="muted" style="margin:0;font-size:13px">Cada reporte trae la tabla de su serie, sus jugadores con goles y tarjetas, y sus partidos. Se puede imprimir o guardar como PDF. Con <b>📋 Enlace de planilla</b> el técnico marca desde su celular quién viene, titulares y suplentes.</p>
       ${teams.map(t => `<div class="team">${crestHtml(t, 36)}<span class="info"><b>${esc(t.name)}</b><small>${esc(t.coach_name || "Sin técnico")}${t.coach_phone ? " · " + esc(t.coach_phone) : ""}</small></span>
         <span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
           <a class="btn ghost sm" href="${esc(torneoLink(C.D.t.id, t.id))}" target="_blank" rel="noopener">Ver</a>
+          ${coachWaHtml(t)}
           ${t.coach_phone ? `<a class="btn wa sm" href="${waLink(t.coach_phone, teamReportText(C.D, t))}" target="_blank" rel="noopener">Enviar al técnico</a>` : `<a class="btn wa sm" href="https://wa.me/?text=${encodeURIComponent(teamReportText(C.D, t))}" target="_blank" rel="noopener">Enviar</a>`}
         </span></div>`).join("") || `<p class="muted" style="margin:0">Aún no hay equipos.</p>`}
     </section></div>`;
@@ -507,8 +580,25 @@ app.addEventListener("click", e => {
       ok(await sb.from("t_matches").insert({ category_id: C.cat, series_id: sid, home_id: h, away_id: a, phase: $("m-phase").value.trim() || "Partido", match_date: $("m-date").value || null, match_time: $("m-time").value }));
       toast("Partido agregado."); await reload();
     }),
-    "m-open": () => { C.match = id; C.draft = null; const m = C.D.matches.find(x => x.id === id); C.evTeam = m ? m.home_id : null; render(); window.scrollTo(0, 0); },
+    "m-open": () => { C.match = id; C.draft = null; const m = C.D.matches.find(x => x.id === id); C.evTeam = m ? m.home_id : null; C.lnTeam = C.evTeam; render(); window.scrollTo(0, 0); reload(); },
+    "ln-refresh": () => run(b, reload),
     "m-close": () => { C.match = null; C.draft = null; render(); },
+    "ln-team": () => { C.lnTeam = id; render(); },
+    "ln-toggle": () => run(b, async () => {
+      const m = C.D.matches.find(x => x.id === C.match), p = C.D.players.find(x => x.id === id);
+      const cur = C.D.lineups.find(l => l.match_id === m.id && l.player_id === id);
+      if (!cur) ok(await sb.from("t_lineups").insert({ match_id: m.id, team_id: p.team_id, player_id: id, role: "starter" }));
+      else if ((cur.role || "starter") === "starter") ok(await sb.from("t_lineups").update({ role: "sub" }).eq("id", cur.id));
+      else ok(await sb.from("t_lineups").delete().eq("id", cur.id));
+      await reload();
+    }),
+    "ln-all": () => run(b, async () => {
+      const m = C.D.matches.find(x => x.id === C.match), on = new Set(C.D.lineups.filter(l => l.match_id === m.id).map(l => l.player_id));
+      const rows = C.D.players.filter(p => p.team_id === id && !on.has(p.id)).map(p => ({ match_id: m.id, team_id: id, player_id: p.id, role: "starter" }));
+      if (rows.length) ok(await sb.from("t_lineups").insert(rows));
+      await reload();
+    }),
+    "ln-print": () => printLineup(C.D.matches.find(x => x.id === C.match)),
     "ev-add": () => run(b, async () => {
       const team_id = $("ev-team").value, player_id = $("ev-player").value || null;
       if (b.dataset.kind !== "goal" && !player_id) throw new Error("Elige el jugador que recibió la tarjeta.");

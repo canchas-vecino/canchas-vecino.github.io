@@ -23,12 +23,14 @@ async function loadTournamentData(tid, admin = false) {
   ]);
   const teamIds = (teams || []).map(x => x.id), matchIds = (matches || []).map(x => x.id);
   const getPlayers = cols => sb.from("t_players").select(cols).in("team_id", teamIds.length ? teamIds : none).order("number", { nullsFirst: false }).order("name");
-  const [{ data: players }, { data: events }] = await Promise.all([
+  const [{ data: players }, { data: events }, { data: lineups }] = await Promise.all([
     // Si aún no se ejecutó el paso 9 (fotos), se cargan los jugadores sin foto
     getPlayers(playerCols).then(r => (r.error && !admin ? getPlayers("id,team_id,name,number,created_at") : r)),
     sb.from("t_events").select("*").in("match_id", matchIds.length ? matchIds : none).order("minute", { nullsFirst: false }).order("created_at"),
+    // Planilla de cada partido (paso 10). Si aún no se ejecutó, queda vacía.
+    sb.from("t_lineups").select("*").in("match_id", matchIds.length ? matchIds : none).then(r => (r.error ? { data: [] } : r)),
   ]);
-  return { t, venue, cats: cats || [], series: series || [], teams: teams || [], players: players || [], matches: matches || [], events: events || [] };
+  return { t, venue, cats: cats || [], series: series || [], teams: teams || [], players: players || [], matches: matches || [], events: events || [], lineups: lineups || [] };
 }
 
 const byId = list => Object.fromEntries(list.map(x => [x.id, x]));

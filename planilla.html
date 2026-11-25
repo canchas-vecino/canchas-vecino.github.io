@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Planilla del equipo</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#1f7a3f">
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Figtree:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="styles.css">
+<style>
+.wrap{max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+.hero{background:var(--turf);color:var(--turf-ink);border-radius:20px;padding:16px;display:flex;align-items:center;gap:12px}
+.hero h1{font-size:28px;font-weight:800}
+.hero p{margin:2px 0 0;font-size:14px;opacity:.9}
+.hero .crest{background:#fff}
+.mchips{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px}
+.mchips button{flex:0 0 auto;border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:8px 12px;text-align:left;cursor:pointer;font-size:13px;line-height:1.3;max-width:220px}
+.mchips button b{display:block;font-size:15px}
+.mchips button[aria-pressed="true"]{border:2px solid var(--turf);background:var(--turf-soft)}
+.pr{display:grid;grid-template-columns:56px minmax(0,1fr);gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.pr:first-child{border-top:0}
+.pr img,.pr .noph{width:56px;height:56px;border-radius:12px;object-fit:cover;background:var(--bg);display:grid;place-items:center;font-size:24px}
+.pr b{display:block;line-height:1.2}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-top:6px}
+.seg button{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:8px 4px;font-weight:600;font-size:13px;cursor:pointer}
+.seg button[aria-pressed="true"][data-r="starter"]{background:var(--turf);color:var(--turf-ink);border-color:var(--turf)}
+.seg button[aria-pressed="true"][data-r="sub"]{background:var(--pend);color:#000;border-color:var(--pend)}
+.seg button[aria-pressed="true"][data-r="out"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.tot{position:sticky;bottom:0;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:8px;box-shadow:0 -4px 16px rgb(0 0 0 / .08)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero" id="hero"><div><h1>Planilla</h1></div></div>
+  <main id="app" style="display:flex;flex-direction:column;gap:14px"><p class="muted">Cargando…</p></main>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.0/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script src="common.js"></script>
+<script src="torneo.js"></script>
+<script>
+const K = new URLSearchParams(location.search).get("k");
+const S = { P: null, match: null, sel: {}, busy: false, saved: {}, error: "" };
+const app = document.getElementById("app");
+
+async function load() {
+  if (!sb) return setupMissing(app);
+  if (!K) { app.innerHTML = `<div class="card"><p>Falta el enlace. Pídelo al organizador del campeonato.</p></div>`; return; }
+  const { data, error } = await sb.rpc("coach_portal", { p_token: K });
+  if (error || !data) { app.innerHTML = `<div class="card"><p>${error ? "No se pudo cargar. Revisa tu conexión y recarga." : "Este enlace no es válido. Pide uno nuevo al organizador."}</p></div>`; return; }
+  S.P = data;
+  const t = data.team;
+  document.title = `Planilla · ${t.name}`;
+  document.getElementById("hero").innerHTML = `${crestHtml(t, 56)}<div><h1>${esc(t.name)}</h1><p>${esc([data.tournament.name, t.category].filter(Boolean).join(" · "))}</p></div>`;
+  data.matches.forEach(m => {
+    const lu = data.lineups.filter(l => l.match_id === m.id);
+    S.sel[m.id] = Object.fromEntries(lu.map(l => [l.player_id, l.role]));
+    if (lu.length) S.saved[m.id] = true;
+  });
+  S.match = data.matches[0] ? data.matches[0].id : null;
+  render();
+}
+const mLabel = m => [m.round ? `Fecha ${m.round}` : m.phase, m.match_date ? dayLabel(m.match_date) : "Sin fecha", m.match_time].filter(Boolean).join(" · ");
+
+function render() {
+  const P = S.P;
+  if (!P.matches.length) { app.innerHTML = `<div class="card"><p style="margin:0">No tienes partidos pendientes. Cuando el organizador programe el próximo, aparecerá aquí.</p></div>`; return; }
+  if (!P.players.length) { app.innerHTML = `<div class="card"><p style="margin:0">Tu equipo aún no tiene jugadores inscritos. Pídele al organizador que los registre.</p></div>`; return; }
+  const m = P.matches.find(x => x.id === S.match), sel = S.sel[m.id];
+  const n = r => P.players.filter(p => (sel[p.id] || "out") === r).length;
+  app.innerHTML = `
+    <section class="card"><h3>Partido</h3>
+      <div class="mchips">${P.matches.map(x => `<button data-m="${x.id}" aria-pressed="${x.id === m.id}"><b>vs ${esc(x.rival)}</b>${esc(mLabel(x))}${S.saved[x.id] ? "<br>✓ Planilla enviada" : ""}</button>`).join("")}</div>
+    </section>
+    <section class="card"><h3>¿Quién juega?</h3>
+      <p class="muted" style="margin:0;font-size:13px">Marca a cada jugador: titular, suplente o si no viene.</p>
+      <div>${P.players.map(p => { const r = sel[p.id] || "out"; return `<div class="pr">${p.photo_url ? `<img src="${esc(p.photo_url)}" alt="">` : `<span class="noph" aria-hidden="true">👤</span>`}
+        <div><b>${p.number != null ? p.number + " · " : ""}${esc(p.name)}</b>
+          <div class="seg" role="group" aria-label="${esc(p.name)}">${[["starter", "Titular"], ["sub", "Suplente"], ["out", "No viene"]].map(([k, l]) => `<button data-p="${p.id}" data-r="${k}" aria-pressed="${r === k}">${l}</button>`).join("")}</div></div></div>`; }).join("")}</div>
+    </section>
+    <div class="tot">
+      <p style="margin:0"><b>${n("starter")}</b> titulares · <b>${n("sub")}</b> suplentes · ${n("out")} no vienen</p>
+      ${S.error ? `<p class="err" style="margin:0">${esc(S.error)}</p>` : ""}
+      <button class="btn block" id="save" ${S.busy ? "disabled" : ""}>${S.busy ? "Enviando…" : S.saved[m.id] ? "Actualizar planilla" : "Enviar planilla"}</button>
+    </div>`;
+  app.querySelectorAll("[data-m]").forEach(b => (b.onclick = () => { S.match = b.dataset.m; S.error = ""; render(); }));
+  app.querySelectorAll("[data-p]").forEach(b => (b.onclick = () => { const s = S.sel[S.match]; if (b.dataset.r === "out") delete s[b.dataset.p]; else s[b.dataset.p] = b.dataset.r; render(); }));
+  document.getElementById("save").onclick = save;
+}
+async function save() {
+  const sel = S.sel[S.match], ids = r => Object.keys(sel).filter(k => sel[k] === r);
+  S.error = "";
+  if (!ids("starter").length) { S.error = "Marca por lo menos un titular."; return render(); }
+  S.busy = true; render();
+  const { error } = await sb.rpc("coach_save_lineup", { p_token: K, p_match: S.match, p_starters: ids("starter"), p_subs: ids("sub") });
+  S.busy = false;
+  if (error) S.error = errMsg(error); else { S.saved[S.match] = true; toast("¡Planilla enviada al organizador!"); }
+  render();
+}
+load();
+</script>
+</body>
+</html>
