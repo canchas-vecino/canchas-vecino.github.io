@@ -83,6 +83,7 @@ code{font-family:ui-monospace,Menlo,monospace;background:var(--bg);padding:1px 6
 .ttable tr.hl td{background:var(--turf-soft);font-weight:700}
 .ttable tr.tot td{font-weight:700;border-bottom:0}
 .tname{display:inline-flex;align-items:center;gap:6px}
+.pphoto{width:40px;height:40px;border-radius:50%;object-fit:cover;background:var(--bg);border:1px solid var(--line);flex:0 0 auto;display:inline-block}
 .match{display:flex;flex-direction:column;gap:4px;padding:10px 0;border-top:1px solid var(--line)}
 .match:first-child{border-top:0}
 button.match{background:none;border:0;border-top:1px solid var(--line);text-align:left;cursor:pointer;width:100%;padding:10px 4px;border-radius:0}

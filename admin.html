@@ -75,7 +75,7 @@ header.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-
       <button data-tab="agenda" aria-pressed="true">Agenda</button>
       <button data-tab="reportes" aria-pressed="false">Reportes</button>
       <button data-tab="ajustes" aria-pressed="false">Ajustes</button>
-      <a href="admin-campeonatos.html">🏆 Campeonatos</a>
+      <a href="admin-campeonatos.html" id="tab-camp">🏆 Campeonatos</a>
     </div>
   </header>
   <div id="app"><p class="muted">Cargando…</p></div>
@@ -136,6 +136,9 @@ function renderHeader() {
     : `${venueLogoHtml(A.venue)}<h1>${esc(A.venue.name)} <span>Administrador</span></h1>`;
   const pick = $("venue-pick");
   pick.hidden = general || A.venues.length < 2;
+  // Los campeonatos son de cada cancha: no se muestran en la vista general
+  $("tab-camp").hidden = general;
+  if (!general) try { localStorage.setItem("cancha", A.venue.id); } catch (e) {}
   pick.innerHTML = A.venues.map(v => `<option value="${v.id}" ${v.id === A.venue.id ? "selected" : ""}>${esc(venueLabel(v))}${v.active ? "" : " (pausada)"}</option>`).join("");
   document.title = general ? "Administrador general" : `Administrador · ${A.venue.name}`;
 }
@@ -217,6 +220,7 @@ function venueCard(v) {
       <button class="btn sm" data-open="${v.id}">Abrir agenda</button>
       <button class="btn ghost sm" data-vcopy="${esc(link)}">Copiar enlace</button>
       <a class="btn wa sm" href="https://wa.me/?text=${encodeURIComponent("⚽ Reserva tu cancha en " + venueLabel(v) + ". Mira las horas libres y separa la tuya aquí: " + link)}" target="_blank" rel="noopener">Compartir</a>
+      <a class="btn ghost sm" href="admin-campeonatos.html" data-camp="${v.id}">🏆 Campeonatos</a>
       <button class="btn ghost sm" data-adm="${v.id}" aria-expanded="${open}">👤 Administradores</button>
       ${v.is_default ? "" : `<button class="btn ${v.active ? "warn" : ""} sm" data-active="${v.id}" data-on="${v.active ? 0 : 1}">${v.active ? "Pausar" : "Activar"}</button>`}
     </div>
@@ -258,6 +262,7 @@ function renderCanchas() {
 function bindCanchas() {
   $("out").onclick = logout;
   app.querySelectorAll("[data-open]").forEach(b => (b.onclick = () => switchVenue(b.dataset.open, "agenda")));
+  app.querySelectorAll("[data-camp]").forEach(a => (a.onclick = () => { try { localStorage.setItem("cancha", a.dataset.camp); } catch (e) {} }));
   app.querySelectorAll("[data-vcopy]").forEach(b => (b.onclick = () => navigator.clipboard.writeText(b.dataset.vcopy).then(() => toast("Enlace copiado."), () => toast("No se pudo copiar. Selecciona el enlace."))));
   app.querySelectorAll("[data-adm]").forEach(b => (b.onclick = async () => {
     A.openAdmins = A.openAdmins === b.dataset.adm ? null : b.dataset.adm;

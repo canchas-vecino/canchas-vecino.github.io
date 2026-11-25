@@ -15,15 +15,17 @@ async function loadTournamentData(tid, admin = false) {
   const none = ["00000000-0000-0000-0000-000000000000"];
   const ids = catIds.length ? catIds : none;
   const teamCols = admin ? "*" : "id,category_id,series_id,name,crest_url,coach_name,created_at";
-  const playerCols = admin ? "*" : "id,team_id,name,number,created_at";
+  const playerCols = admin ? "*" : "id,team_id,name,number,photo_url,created_at";
   const [{ data: series }, { data: teams }, { data: matches }] = await Promise.all([
     sb.from("t_series").select("*").in("category_id", ids).order("name"),
     sb.from("t_teams").select(teamCols).in("category_id", ids).order("name"),
     sb.from("t_matches").select("*").in("category_id", ids).order("round", { nullsFirst: false }).order("match_date", { nullsFirst: false }).order("match_time").order("created_at"),
   ]);
   const teamIds = (teams || []).map(x => x.id), matchIds = (matches || []).map(x => x.id);
+  const getPlayers = cols => sb.from("t_players").select(cols).in("team_id", teamIds.length ? teamIds : none).order("number", { nullsFirst: false }).order("name");
   const [{ data: players }, { data: events }] = await Promise.all([
-    sb.from("t_players").select(playerCols).in("team_id", teamIds.length ? teamIds : none).order("number", { nullsFirst: false }).order("name"),
+    // Si aún no se ejecutó el paso 9 (fotos), se cargan los jugadores sin foto
+    getPlayers(playerCols).then(r => (r.error && !admin ? getPlayers("id,team_id,name,number,created_at") : r)),
     sb.from("t_events").select("*").in("match_id", matchIds.length ? matchIds : none).order("minute", { nullsFirst: false }).order("created_at"),
   ]);
   return { t, venue, cats: cats || [], series: series || [], teams: teams || [], players: players || [], matches: matches || [], events: events || [] };
@@ -153,7 +155,7 @@ function teamReportHtml(D, team) {
     ${standingsHtml(standings(D, group, ser ? ser.id : undefined), team.id)}
     <h3>Jugadores (${players.length})</h3>
     ${players.length ? `<table class="ttable"><thead><tr><th>N°</th><th class="tl">Jugador</th><th>⚽</th><th>🟨</th><th>🟥</th></tr></thead><tbody>
-      ${players.map(p => { const s = stats[p.id] || {}; return `<tr><td>${p.number ?? ""}</td><td class="tl">${esc(p.name)}</td><td>${s.goal || 0}</td><td>${s.yellow || 0}</td><td>${s.red || 0}</td></tr>`; }).join("")}
+      ${players.map(p => { const s = stats[p.id] || {}; return `<tr><td>${p.number ?? ""}</td><td class="tl"><span class="tname">${p.photo_url ? `<img class="pphoto" src="${esc(p.photo_url)}" alt="">` : `<span class="pphoto" aria-hidden="true"></span>`}${esc(p.name)}</span></td><td>${s.goal || 0}</td><td>${s.yellow || 0}</td><td>${s.red || 0}</td></tr>`; }).join("")}
       <tr class="tot"><td></td><td class="tl">Total</td><td>${tot.g}</td><td>${tot.y}</td><td>${tot.r}</td></tr></tbody></table>` : `<p class="muted" style="margin:0">Aún no hay jugadores inscritos.</p>`}
     <h3>Partidos</h3>
     ${ms.length ? ms.map(m => matchRowHtml(D, m)).join("") : `<p class="muted" style="margin:0">Aún no hay partidos programados.</p>`}

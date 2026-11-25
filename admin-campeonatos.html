@@ -29,9 +29,13 @@ header.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-
 .team .info b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .team .info small{color:var(--muted);font-size:12px}
 .team select{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px}
-.plist .pl{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+.plist .pl{display:grid;grid-template-columns:56px minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
 .plist .pl:first-child{border-top:0}
 .pl .n{font-family:var(--display);font-weight:700;font-size:20px;text-align:center}
+.ph{position:relative;width:52px;height:52px;border-radius:50%;background:var(--bg);border:1px dashed var(--line);display:grid;place-items:center;cursor:pointer;font-size:11px;color:var(--muted);text-align:center;line-height:1.1}
+.ph img{width:100%;height:100%;object-fit:cover;border-radius:50%}
+.ph input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.ph .num{position:absolute;right:-2px;bottom:-2px;background:var(--fg);color:var(--bg);border-radius:999px;font:700 11px var(--body);padding:1px 5px}
 .pl small{display:block;color:var(--muted);font-size:12px}
 .pl .warn{color:var(--danger);font-weight:600}
 .ev{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--line);font-size:14px}
@@ -213,9 +217,11 @@ function teamDetailHtml() {
       <div class="row"><div class="field"><label for="pl-name">Nombre completo</label><input id="pl-name" placeholder="Ej. Juan Pérez"></div>
         <div class="field sm"><label for="pl-num">Camiseta</label><input id="pl-num" type="number" min="0" max="999"></div></div>
       <div class="row"><div class="field"><label for="pl-ced">Cédula (opcional)</label><input id="pl-ced" inputmode="numeric" maxlength="10"></div>
-        <div class="field"><label for="pl-birth">Fecha de nacimiento (opcional)</label><input id="pl-birth" type="date"></div>
+        <div class="field"><label for="pl-birth">Fecha de nacimiento (opcional)</label><input id="pl-birth" type="date"></div></div>
+      <div class="row"><div class="field"><label for="pl-photo">Foto del jugador</label><input id="pl-photo" type="file" accept="image/*"></div>
         <button class="btn sm" data-act="pl-add">Agregar</button></div>
-      <div class="plist">${players.map(p => { const w = ageProblem(c, p), age = ageOn(p.birth_date, nowEc().date); return `<div class="pl"><span class="n">${p.number ?? "–"}</span>
+      ${players.length ? `<small class="muted" style="font-size:12px">Toca el círculo de un jugador para ponerle o cambiarle la foto.</small>` : ""}
+      <div class="plist">${players.map(p => { const w = ageProblem(c, p), age = ageOn(p.birth_date, nowEc().date); return `<div class="pl"><label class="ph" title="Foto de ${esc(p.name)}">${p.photo_url ? `<img src="${esc(p.photo_url)}" alt="">` : "📷<br>Foto"}${p.number != null ? `<span class="num">${p.number}</span>` : ""}<input type="file" accept="image/*" data-photo-for="${p.id}" aria-label="Foto de ${esc(p.name)}"></label>
         <div><b>${esc(p.name)}</b><small>${p.cedula ? "CI " + esc(p.cedula) : ""}${age !== null ? (p.cedula ? " · " : "") + age + " años" : ""}</small>${w ? `<small class="warn">⚠️ ${esc(w)}</small>` : ""}</div>
         <button class="btn warn sm" data-act="pl-del" data-id="${p.id}">Quitar</button></div>`; }).join("") || `<p class="muted" style="margin:0">Aún no hay jugadores.</p>`}</div>
     </section></div>`;
@@ -372,13 +378,15 @@ function shrinkImage(file, max = 256) {
     img.src = url;
   });
 }
-async function uploadCrest(file) {
-  const blob = await shrinkImage(file);
-  const path = `${C.venue.id}/escudos/${crypto.randomUUID()}.png`;
+async function uploadImage(file, folder, max) {
+  const blob = await shrinkImage(file, max);
+  const path = `${C.venue.id}/${folder}/${crypto.randomUUID()}.png`;
   const { error } = await sb.storage.from("branding").upload(path, blob, { contentType: "image/png" });
-  if (error) throw new Error("No se pudo subir el escudo.");
+  if (error) throw new Error("No se pudo subir la imagen.");
   return sb.storage.from("branding").getPublicUrl(path).data.publicUrl;
 }
+const uploadCrest = f => uploadImage(f, "escudos", 256);
+const uploadPhoto = f => uploadImage(f, "jugadores", 400);
 const num = v => (v === "" || v == null ? null : Math.max(0, Math.round(+v)));
 function sure(b, label = "¿Seguro? Toca otra vez") {
   if (b.dataset.sure) return true;
@@ -400,6 +408,14 @@ app.addEventListener("input", e => {
 app.addEventListener("change", e => {
   if (["me-phase", "me-date", "me-time"].includes(e.target.id))
     C.draft = { id: C.match, phase: $("me-phase").value, date: $("me-date").value, time: $("me-time").value };
+  const ph = e.target.closest("[data-photo-for]");
+  if (ph && ph.files[0]) return run(null, async () => {
+    toast("Subiendo foto…");
+    const url = await uploadPhoto(ph.files[0]);
+    const r = await sb.from("t_players").update({ photo_url: url }).eq("id", ph.dataset.photoFor);
+    if (r.error && /photo_url/.test(r.error.message || "")) throw new Error("Para guardar fotos, ejecuta supabase/09-fotos-jugadores.sql en Supabase.");
+    ok(r); toast("Foto guardada."); await reload();
+  });
   const s = e.target.closest("[data-series-for]");
   if (s) return run(null, async () => { ok(await sb.from("t_teams").update({ series_id: s.value || null }).eq("id", s.dataset.seriesFor)); await reload(); });
   if (e.target.id === "ev-team") { C.evTeam = e.target.value; render(); }
@@ -450,7 +466,10 @@ app.addEventListener("click", e => {
       if (ced && !/^\d{10}$/.test(ced)) throw new Error("La cédula debe tener 10 dígitos.");
       if (ced && C.D.players.some(p => p.cedula === ced && C.D.teams.some(t => t.id === p.team_id && t.category_id === C.cat))) throw new Error("Esa cédula ya está inscrita en esta categoría.");
       const p = { team_id: C.team, name, number: num($("pl-num").value), cedula: ced, birth_date: $("pl-birth").value || null };
-      ok(await sb.from("t_players").insert(p));
+      const f = $("pl-photo").files[0]; if (f) p.photo_url = await uploadPhoto(f);
+      const r = await sb.from("t_players").insert(p);
+      if (r.error && f && /photo_url/.test(r.error.message || "")) throw new Error("Para guardar fotos, ejecuta supabase/09-fotos-jugadores.sql en Supabase.");
+      ok(r);
       const w = ageProblem(cat(), p); toast(w ? `Jugador agregado. Ojo: ${w}.` : "Jugador agregado.");
       await reload(); $("pl-name") && $("pl-name").focus();
     }),
